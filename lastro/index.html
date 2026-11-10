@@ -225,7 +225,7 @@ const KEYWORDS = {
 const blankData = () => ({
   v: 1,
   accounts: [], cards: [], cats: DEFAULT_CATS(), tags: [], budgets: {}, goals: [], loans: [], inbox: [],
-  settings: {hide: false, pin: '', lockOnStart: false, alertLowBalance: true, theme: 'system', autoCat: true, includeCardsInBalance: true},
+  settings: {autoPay: false, hide: false, pin: '', lockOnStart: false, alertLowBalance: true, theme: 'system', autoCat: true, includeCardsInBalance: true},
   snaps: []
 });
 
@@ -327,7 +327,8 @@ function cardInvoiceYm(c, date) {
 function accountBalance(aid, uptoDate, onlyPaid) {
   const a = acc(aid); let b = a?.initial || 0;
   for (const t of store.allTx()) {
-    if (t.date > uptoDate || (onlyPaid && !t.paid)) continue;
+    const eff = t.paid && t.paidDate ? t.paidDate : t.date;
+    if (eff > uptoDate || (onlyPaid && !t.paid)) continue;
     if (t.type === 'income' && t.account === aid) b += t.amount;
     else if (t.type === 'expense' && !t.card && t.account === aid) b -= t.amount;
     else if (t.type === 'transfer') { if (t.account === aid) b -= t.amount; if (t.to === aid) b += t.amount; }
@@ -343,6 +344,7 @@ function monthTx(ym) { return store.months[ym] || []; }
 function monthTotals(ym) {
   let inc = 0, exp = 0, incP = 0, expP = 0, cardExp = 0, debExp = 0, pendN = 0, pendV = 0;
   for (const t of monthTx(ym)) {
+    if (t.ign?.totals) continue;
     if (t.type === 'income') { inc += t.amount; if (t.paid) incP += t.amount; }
     if (t.type === 'expense') { exp += t.amount; if (t.paid || t.card) expP += t.amount; t.card ? cardExp += t.amount : debExp += t.amount; if (!t.paid && !t.card) { pendN++; pendV += t.amount; } }
   }
@@ -357,10 +359,15 @@ function invoice(cid, ym) {
   const paidOpen = store.allTx().filter(t => t.type === 'cardpay' && t.card === cid && t.invoice >= ymOf(todayStr())).reduce((s, t) => s + t.amount, 0);
   return {total: round2(total), paid: round2(paid), items, used: round2(used - paidOpen), closeDate: dateIn(c.due <= c.closing ? addYm(ym, -1) : ym, c.closing), dueDate: dateIn(ym, c.due)};
 }
-function byCategory(ym, type) {
+function byCategory(ym, type, flag = 'stats') {
   const m = {};
-  for (const t of monthTx(ym)) if (t.type === type) m[t.cat] = (m[t.cat] || 0) + t.amount;
+  for (const t of monthTx(ym)) if (t.type === type && !t.ign?.[flag]) m[t.cat] = (m[t.cat] || 0) + t.amount;
   return Object.entries(m).map(([id, v]) => ({id, v: round2(v), c: cat(id)})).sort((a, b) => b.v - a.v);
+}
+function savingTotals(ym) {
+  let inc = 0, exp = 0;
+  for (const t of monthTx(ym)) { if (t.ign?.saving) continue; if (t.type === 'income') inc += t.amount; if (t.type === 'expense') exp += t.amount; }
+  return {inc, exp};
 }
 function statusOf(t) {
   if (t.type === 'cardpay' || t.card) return 'ok';
@@ -373,12 +380,12 @@ function health(ym) {
   const avgExp = (mt.exp + prev.reduce((s, p) => s + p.exp, 0)) / 4 || 1;
   const savingAcc = D().accounts.filter(a => a.kind === 'savings' || a.kind === 'invest').reduce((s, a) => s + accountBalance(a.id, endOf(ym), false), 0);
   const parts = [];
-  const rate = mt.inc ? (mt.inc - mt.exp) / mt.inc : (mt.exp ? -1 : 0);
-  parts.push({k: 'Economia', s: Math.max(0, Math.min(25, rate * 125)), max: 25, hint: mt.inc ? `Você guardou ${Math.round(rate * 100)}% do que entrou.` : 'Nenhuma receita no mês.'});
+  const sv = savingTotals(ym); const rate = sv.inc ? (sv.inc - sv.exp) / sv.inc : (sv.exp ? -1 : 0);
+  parts.push({k: 'Economia', s: Math.max(0, Math.min(25, rate * 125)), max: 25, hint: sv.inc ? `Você guardou ${Math.round(rate * 100)}% do que entrou.` : 'Nenhuma receita no mês.'});
   const months = savingAcc / avgExp;
   parts.push({k: 'Reserva', s: Math.max(0, Math.min(25, months / 6 * 25)), max: 25, hint: `Sua reserva cobre ${months.toFixed(1).replace('.', ',')} mês(es) de gastos. O ideal é 6.`});
   const buds = Object.entries(D().budgets).filter(([, v]) => v > 0);
-  const byC = Object.fromEntries(byCategory(ym, 'expense').map(x => [x.id, x.v]));
+  const byC = Object.fromEntries(byCategory(ym, 'expense', 'budget').map(x => [x.id, x.v]));
   const okB = buds.filter(([c, v]) => (byC[c] || 0) <= v).length;
   parts.push({k: 'Planejamento', s: buds.length ? okB / buds.length * 20 : 8, max: 20, hint: buds.length ? `${okB} de ${buds.length} orçamentos dentro do limite.` : 'Defina orçamentos por categoria.'});
   const cardShare = mt.inc ? mt.cardExp / mt.inc : (mt.cardExp ? 1 : 0);
@@ -435,11 +442,11 @@ function txRow(t) {
   let title = t.desc, sub;
   if (t.type === 'transfer') sub = `${acc(t.account)?.name || '?'} → ${acc(t.to)?.name || '?'}`;
   else if (t.type === 'cardpay') sub = `Fatura ${card(t.card)?.name || ''} · ${acc(t.account)?.name || ''}`;
-  else sub = `${sourceName(t)} · ${cat(t.cat).name}`;
+  else sub = `${sourceName(t)} · ${cat(t.cat).name}${subName(t) ? ' › ' + subName(t) : ''}`;
   const inst = t.inst ? ` ${t.inst.n}/${t.inst.of}` : '';
   const stBtn = t.card || t.type === 'cardpay' ? `<div class="st ok" title="Efetivada">${ICO.check}</div>` :
     `<button class="st ${st}" data-act="toggle" data-v="${t.id}" title="${t.paid ? 'Marcar como pendente' : 'Marcar como efetivada'}" aria-label="${t.paid ? 'Marcar como pendente' : 'Marcar como efetivada'}">${st === 'ok' ? ICO.check : st === 'late' ? ICO.warn : ICO.clock}</button>`;
-  const tags = (t.tags || []).map(x => `<span class="chip">#${esc(x)}</span>`).join('');
+  const tags = (t.tags || []).map(x => `<span class="chip">#${esc(x)}</span>`).join('') + (t.att?.length ? `<span class="chip">${t.att.length} anexo(s)</span>` : '') + (t.adj ? `<span class="chip">${t.adj.kind === 'fee' ? 'encargos' : 'desconto'} ${money(t.adj.v)}</span>` : '');
   return `<div class="row">${stBtn}<div class="grow clickable" data-act="edit" data-v="${t.id}"><div class="t">${esc(title)}${inst}</div><div class="s">${esc(sub)}</div>${tags ? `<div class="chips">${tags}</div>` : ''}</div>
     <div class="v num clickable ${cls}" data-act="edit" data-v="${t.id}">${t.type === 'transfer' ? money(t.amount) : money(sign * t.amount)}<small>${dow(t.date)} ${t.date.slice(8)}</small></div></div>`;
 }
@@ -459,9 +466,9 @@ VIEWS.inicio = () => {
   if (rest) top.push({v: rest, c: {name: 'Demais', color: '#7d8496'}});
   const last6 = [-5, -4, -3, -2, -1, 0].map(i => addYm(ym, i));
   const h = health(ym);
-  const saving = mt.inc ? Math.round((mt.inc - mt.exp) / mt.inc * 100) : null;
+  const sv = savingTotals(ym); const saving = sv.inc ? Math.round((sv.inc - sv.exp) / sv.inc * 100) : null;
   const pendInbox = D().inbox.length;
-  const buds = Object.entries(D().budgets).filter(([, v]) => v > 0); const byC = Object.fromEntries(cats.map(x => [x.id, x.v]));
+  const buds = Object.entries(D().budgets).filter(([, v]) => v > 0); const byC = Object.fromEntries(byCategory(ym, 'expense', 'budget').map(x => [x.id, x.v]));
   return `
   ${store.mode === 'local' ? `<div class="notice">Os dados estão sendo salvos só neste navegador. Abra o app pelo claude.ai, com sua conta, para guardar tudo na nuvem.</div>` : ''}
   <section class="panel hero">
@@ -575,7 +582,7 @@ VIEWS.planejar = () => {
         <div class="btnrow" style="margin-top:10px"><button class="btn sm" data-act="goalDeposit" data-v="${g.id}">Depositar</button><button class="btn ghost sm" data-act="goalForm" data-v="${g.id}">Editar</button></div></section>`;
     }).join('') : `<section class="panel">${emptyBox('Nenhum objetivo', 'Crie metas como reserva de emergência, viagem ou um carro novo.')}</section>`) + `<button class="btn" data-act="goalForm">Novo objetivo</button>`;
   }
-  const byC = Object.fromEntries(byCategory(ui.ym, 'expense').map(x => [x.id, x.v]));
+  const byC = Object.fromEntries(byCategory(ui.ym, 'expense', 'budget').map(x => [x.id, x.v]));
   const cats = D().cats.filter(c => c.type === 'expense');
   const totalB = Object.values(D().budgets).reduce((s, v) => s + (v || 0), 0);
   const totalG = cats.filter(c => D().budgets[c.id]).reduce((s, c) => s + (byC[c.id] || 0), 0);
@@ -679,7 +686,8 @@ VIEWS.config = () => {
     <p class="muted" style="font-size:.8rem;margin:8px 0 0">O PIN evita olhares curiosos neste aparelho. Seus dados ficam protegidos pela sua conta do claude.ai.</p></section>
   <section class="panel"><span class="lbl">Lançamentos</span>
     ${sw('autoCat', 'Sugerir categoria', 'Ao digitar a descrição, usa a categoria do último lançamento parecido.')}
-    ${sw('alertLowBalance', 'Avisar saldo insuficiente', 'Alerta quando uma despesa deixa a conta negativa.')}</section>
+    ${sw('alertLowBalance', 'Avisar saldo insuficiente', 'Alerta quando uma despesa deixa a conta negativa.')}
+    ${sw('autoPay', 'Efetivar automaticamente', 'Lançamentos pendentes viram efetivados quando chega a data, exceto os marcados para não efetivar.')}</section>
   <section class="panel"><span class="lbl">Dados</span><div class="btnrow" style="margin-top:8px"><button class="btn danger sm" data-act="wipe">Começar do zero</button></div></section>`;
 };
 
@@ -759,78 +767,209 @@ function confirmSheet(title, text, okLabel, onOk) {
 const opts = (arr, sel) => arr.map(x => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
 
 /* ============ formulário de lançamento ============ */
+function evalAmount(str) {
+  let s = String(str ?? '').replace(/R\$|\s/g, '');
+  if (!s) return 0;
+  if (s.includes(',')) s = s.replace(/\.(?=\d{3}(\D|$))/g, '').replace(/,/g, '.');
+  if (!/^[\d.+\-*/()]+$/.test(s)) return parseMoney(str);
+  try { const v = Function('"use strict";return (' + s + ')')(); return isFinite(v) ? round2(v) : 0; } catch { return parseMoney(str); }
+}
+const fmtInput = v => v ? String(round2(v)).replace('.', ',') : '';
+const subName = t => { const c = cat(t.cat); return t.sub ? (c.subs || []).find(s => s.id === t.sub)?.name || '' : ''; };
+function addPeriod(date, i, freq) {
+  if (freq === 'w' || freq === '2w') { const d = new Date(date + 'T12:00'); d.setDate(d.getDate() + i * (freq === 'w' ? 7 : 14)); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+  return dateIn(addYm(ymOf(date), i * (freq === 'y' ? 12 : 1)), +date.slice(8));
+}
+const IGN = [['stats', 'Ignorar em estatísticas e gráficos'], ['budget', 'Ignorar em orçamentos'], ['saving', 'Ignorar na economia mensal'], ['totals', 'Ignorar nos totais do mês']];
+let assetsCap = null;
+
 function txForm(t, preset = {}) {
   const editing = !!t;
-  t = t || {type: preset.type || 'expense', date: preset.date || todayStr(), paid: true, tags: []};
   if (!D().accounts.length && !D().cards.length) { toast('Cadastre uma conta antes de lançar.'); return accForm(); }
-  let type = t.type === 'cardpay' ? 'transfer' : t.type;
-  const draw = el => {
-    const cats = D().cats.filter(c => c.type === (type === 'income' ? 'income' : 'expense'));
-    const srcSel = t.card ? 'c:' + t.card : 'a:' + (t.account || D().accounts[0]?.id);
-    el.innerHTML = `${sheetHead(editing ? 'Editar lançamento' : 'Novo lançamento')}
-    <div class="seg">${[['expense', 'Despesa'], ['income', 'Receita'], ['transfer', 'Transferência']].map(([k, l]) => `<button type="button" class="${type === k ? 'on' : ''}" data-ty="${k}">${l}</button>`).join('')}</div>
-    <form id="txf" style="display:flex;flex-direction:column;gap:10px">
-      <div class="field"><span>Valor (R$)</span><input id="fAmount" inputmode="decimal" required value="${t.amount != null ? String(t.amount).replace('.', ',') : ''}" placeholder="0,00" style="font-size:1.4rem;font-weight:700"></div>
-      <div class="field"><span>Descrição</span><input id="fDesc" required maxlength="80" value="${esc(t.desc || '')}" list="descList" autocomplete="off"><datalist id="descList">${[...new Set(store.allTx().map(x => x.desc))].slice(-80).map(d => `<option value="${esc(d)}">`).join('')}</datalist></div>
-      <div class="grid2"><div class="field"><span>Data</span><input type="date" id="fDate" required value="${t.date}"></div>
-      ${type === 'transfer' ? `<div class="field"><span>De</span><select id="fFrom">${opts(D().accounts, t.account)}</select></div>` :
-        `<div class="field"><span>${type === 'income' ? 'Recebido em' : 'Pago com'}</span><select id="fSrc">${D().accounts.map(a => `<option value="a:${a.id}" ${srcSel === 'a:' + a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}${type === 'expense' ? D().cards.map(c => `<option value="c:${c.id}" ${srcSel === 'c:' + c.id ? 'selected' : ''}>Cartão ${esc(c.name)}</option>`).join('') : ''}</select></div>`}</div>
-      ${type === 'transfer' ? `<div class="field"><span>Para</span><select id="fTo">${opts(D().accounts, t.to || D().accounts[1]?.id)}</select></div>` :
-        `<div class="field"><span>Categoria</span><select id="fCat">${opts(cats, t.cat || cats[0]?.id)}</select></div>`}
-      <div class="field"><span>Tags (separe por vírgula)</span><input id="fTags" value="${esc((t.tags || []).join(', '))}" list="tagList"><datalist id="tagList">${D().tags.map(x => `<option value="${esc(x)}">`).join('')}</datalist></div>
-      ${type !== 'transfer' ? `<label class="check"><span><b>${type === 'income' ? 'Recebido' : 'Pago'}</b><small>Desmarque se ainda vai acontecer</small></span><input type="checkbox" class="switch" id="fPaid" ${t.paid ? 'checked' : ''}></label>` : ''}
-      ${!editing ? `<div class="field"><span>Repetir</span><select id="fRep"><option value="no">Não repete</option><option value="inst">Parcelado</option><option value="fixed">Fixo mensal</option></select></div>
-      <div class="grid2" id="repBox" hidden><div class="field"><span id="repLbl">Parcelas</span><input type="number" id="fTimes" min="2" max="120" value="2"></div><div class="field" id="instMode"><span>O valor digitado é</span><select id="fInstMode"><option value="total">O total</option><option value="each">De cada parcela</option></select></div></div>` :
-        (t.group ? `<label class="check"><span><b>Aplicar às próximas</b><small>Altera também as parcelas ou repetições seguintes</small></span><input type="checkbox" class="switch" id="fAll"></label>` : '')}
-      <div class="field"><span>Observação</span><input id="fNote" value="${esc(t.note || '')}" maxlength="200"></div>
-      <div class="btnrow"><button class="btn" style="flex:1">${editing ? 'Salvar' : 'Adicionar'}</button>${editing ? '<button type="button" class="btn danger" id="fDel">Excluir</button>' : ''}</div>
-    </form>`;
-    el.querySelectorAll('[data-ty]').forEach(b => b.onclick = () => { collect(); type = b.dataset.ty; t.cat = null; draw(el); });
-    const rep = el.querySelector('#fRep');
-    if (rep) rep.onchange = () => { el.querySelector('#repBox').hidden = rep.value === 'no'; el.querySelector('#instMode').hidden = rep.value !== 'inst'; el.querySelector('#repLbl').textContent = rep.value === 'inst' ? 'Parcelas' : 'Quantos meses'; if (rep.value === 'fixed') el.querySelector('#fTimes').value = 12; };
-    const desc = el.querySelector('#fDesc');
-    desc.addEventListener('change', () => { if (!S().autoCat || editing) return; const g = guessCat(desc.value, type); const sel = el.querySelector('#fCat'); if (g && sel && [...sel.options].some(o => o.value === g)) sel.value = g; });
-    el.querySelector('#fDel')?.addEventListener('click', () => { el.closest('.sheet-bg').remove(); deleteTx(t); });
-    el.querySelector('#txf').onsubmit = e => { e.preventDefault(); if (save()) el.closest('.sheet-bg').remove(); };
+  t = t || {};
+  const firstAcc = D().accounts[0]?.id;
+  const f = {
+    type: t.type === 'cardpay' ? 'transfer' : (t.type || preset.type || 'expense'),
+    amountStr: fmtInput(t.adj ? t.amount - (t.adj.kind === 'fee' ? t.adj.v : -t.adj.v) : t.amount), adjKind: t.adj?.kind || 'fee', adjStr: fmtInput(t.adj?.v), launch: t.launch || nowLocal(), desc: t.desc || '', rep: 'no', times: 2, instMode: 'total', freq: 'm', fixedMonths: 12,
+    multi: false, splits: [], date: t.date || preset.date || todayStr(), paid: t.paid ?? true, paidDate: t.paidDate || '',
+    cat: t.cat || null, sub: t.sub || '', src: t.card ? 'c:' + t.card : 'a:' + (t.account || firstAcc), from: t.account || firstAcc, to: t.to || D().accounts[1]?.id || firstAcc,
+    tagsStr: (t.tags || []).join(', '), note: t.note || '', att: structuredClone(t.att || []), goal: t.goal || '', noAuto: !!t.noAuto, ign: {...(t.ign || {})},
+    cont: false, more: !!(t.note || t.adj || t.att?.length || t.goal || t.noAuto || Object.values(t.ign || {}).some(Boolean)), applyAll: false
   };
+  const catsOf = () => D().cats.filter(c => c.type === (f.type === 'income' ? 'income' : 'expense'));
+  const subOpts = (cid, sel) => { const subs = cat(cid).subs || []; return `<option value="">Nenhuma</option>` + subs.map(s => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${esc(s.name)}</option>`).join(''); };
+  const tone = () => f.type === 'income' ? 'var(--inc)' : f.type === 'expense' ? 'var(--exp)' : 'var(--trf)';
+  let el;
+
   const collect = () => {
-    const el = document.querySelector('.sheet');
-    t.amount = parseMoney(el.querySelector('#fAmount').value) || t.amount; t.desc = el.querySelector('#fDesc').value; t.date = el.querySelector('#fDate').value;
+    const q = id => el.querySelector('#' + id);
+    const v = id => q(id)?.value, c = id => q(id)?.checked;
+    if (q('fAmount')) f.amountStr = v('fAmount');
+    if (q('fDesc')) f.desc = v('fDesc');
+    if (q('fRep')) f.rep = v('fRep');
+    if (q('fTimes')) f.times = +v('fTimes') || 2;
+    if (q('fFreq')) f.freq = v('fFreq');
+    if (q('fInstMode')) f.instMode = v('fInstMode');
+    if (q('fMonths')) f.fixedMonths = +v('fMonths') || 12;
+    if (q('fDate')) f.date = v('fDate');
+    if (q('fPaid')) f.paid = c('fPaid');
+    if (q('fPaidDate')) f.paidDate = v('fPaidDate');
+    if (q('fCat')) f.cat = v('fCat');
+    if (q('fSub')) f.sub = v('fSub');
+    if (q('fSrc')) f.src = v('fSrc');
+    if (q('fFrom')) f.from = v('fFrom');
+    if (q('fTo')) f.to = v('fTo');
+    if (q('fTags')) f.tagsStr = v('fTags');
+    if (q('fNote')) f.note = v('fNote');
+    if (q('fAdj')) f.adjStr = v('fAdj');
+    if (q('fLaunch')) f.launch = v('fLaunch');
+    if (q('fGoal')) f.goal = v('fGoal');
+    if (q('fNoAuto')) f.noAuto = c('fNoAuto');
+    if (q('fCont')) f.cont = c('fCont');
+    if (q('fAll')) f.applyAll = c('fAll');
+    IGN.forEach(([k]) => { if (q('fIgn_' + k)) f.ign[k] = c('fIgn_' + k); });
+    el.querySelectorAll('[data-split]').forEach(row => { const i = +row.dataset.split; const sp = f.splits[i]; if (!sp) return; sp.cat = row.querySelector('select').value; sp.amtStr = row.querySelector('input').value; });
   };
+  const redraw = () => { collect(); draw(); };
+  const hints = () => {
+    const amt = evalAmount(f.amountStr), h = id => el.querySelector('#' + id);
+    if (h('instHint')) h('instHint').textContent = amt > 0 ? `${f.times}x de ${money(f.instMode === 'total' ? round2(amt / f.times) : amt)}${f.instMode === 'total' ? '' : ` · total ${money(round2(amt * f.times))}`}` : '';
+    if (h('splitHint')) { const sum = round2(f.splits.reduce((s, x) => s + evalAmount(x.amtStr), 0)), diff = round2(amt - sum);
+      h('splitHint').innerHTML = `Distribuído: ${money(sum)}` + (amt > 0 ? ` de ${money(amt)}${diff ? ` · <b class="${diff < 0 ? 'exp' : ''}">${diff < 0 ? 'passou ' + money(-diff) : 'falta ' + money(diff)}</b>` : ''}` : ' (o total será a soma)'); }
+    if (h('adjHint')) { const a = evalAmount(f.adjStr); h('adjHint').textContent = a > 0 && amt > 0 ? `Valor final: ${money(round2(amt + (f.adjKind === 'fee' ? 1 : -1) * a))}` : ''; }
+  };
+  const sw = (id, title, sub, on) => `<label class="check"><span><b>${title}</b>${sub ? `<small>${sub}</small>` : ''}</span><input type="checkbox" class="switch" id="${id}" ${on ? 'checked' : ''}></label>`;
+
+  const draw = () => {
+    const cats = catsOf();
+    if (!f.cat || !cats.some(c => c.id === f.cat)) f.cat = (f.desc && guessCat(f.desc, f.type)) || cats[0]?.id;
+    if (f.type === 'income' && f.src.startsWith('c:')) f.src = 'a:' + firstAcc;
+    const title = editing ? 'Editar lançamento' : f.type === 'income' ? 'Nova receita' : f.type === 'expense' ? 'Nova despesa' : 'Nova transferência';
+    el.innerHTML = `${sheetHead(title)}
+    <div class="seg">${[['expense', 'Despesa'], ['income', 'Receita'], ['transfer', 'Transferência']].map(([k, l]) => `<button type="button" class="${f.type === k ? 'on' : ''}" data-ty="${k}">${l}</button>`).join('')}</div>
+    <form id="txf" style="display:flex;flex-direction:column;gap:10px" novalidate>
+      <div class="field"><span>Descrição</span><input id="fDesc" maxlength="80" value="${esc(f.desc)}" list="descList" autocomplete="off" placeholder="${f.type === 'income' ? 'Ex.: Salário, venda' : f.type === 'expense' ? 'Ex.: Mercado, Uber' : 'Ex.: Guardar na reserva'}"><datalist id="descList">${[...new Set(store.allTx().map(x => x.desc))].slice(-80).map(d => `<option value="${esc(d)}">`).join('')}</datalist></div>
+      <div class="field"><span>Valor (R$). Pode digitar contas, como 25+18,50</span>
+        <div style="display:flex;gap:6px;align-items:center"><input id="fAmount" inputmode="decimal" value="${esc(f.amountStr)}" placeholder="0,00" style="font-size:1.4rem;font-weight:700;color:${tone()}" aria-label="Valor">
+        <button type="button" class="icon-btn" id="aClear" aria-label="Limpar valor">${ICO.close}</button>
+        <button type="button" class="btn ghost sm" id="aCalc" title="Calcular a conta digitada">=</button></div></div>
+      <div class="chips">${[1, 5, 10, 50].map(n => `<button type="button" class="chip" data-plus="${n}" style="border:0;cursor:pointer;padding:6px 12px;color:${tone()}">+ R$ ${n}</button>`).join('')}</div>
+      ${!editing ? `<div class="field"><span>Repetição</span><select id="fRep"><option value="no" ${f.rep === 'no' ? 'selected' : ''}>Não recorrente</option><option value="inst" ${f.rep === 'inst' ? 'selected' : ''}>Parcelar ou repetir</option><option value="fixed" ${f.rep === 'fixed' ? 'selected' : ''}>Fixa mensal</option></select></div>
+        ${f.rep === 'inst' ? `<div class="grid2"><div class="field"><span>Quantidade</span><input type="number" id="fTimes" min="2" max="120" value="${f.times}"></div><div class="field"><span>A cada</span><select id="fFreq">${[['m', 'Mês'], ['w', 'Semana'], ['2w', '2 semanas'], ['y', 'Ano']].map(([k, l]) => `<option value="${k}" ${f.freq === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+          <div class="field"><span>O valor digitado é</span><select id="fInstMode"><option value="total" ${f.instMode === 'total' ? 'selected' : ''}>O total (dividir em parcelas)</option><option value="each" ${f.instMode === 'each' ? 'selected' : ''}>De cada vez (repetir o valor)</option></select></div>
+          <p class="muted" style="margin:0;font-size:.82rem" id="instHint"></p>` : ''}
+        ${f.rep === 'fixed' ? `<div class="field"><span>Lançar nos próximos (meses)</span><input type="number" id="fMonths" min="2" max="60" value="${f.fixedMonths}"></div>` : ''}` :
+        (t.group ? sw('fAll', 'Aplicar às próximas', 'Altera também as parcelas ou repetições seguintes', f.applyAll) : '')}
+      ${f.type === 'expense' && !editing ? sw('fMulti', 'Multicategorias', 'Divida o valor entre várias categorias', f.multi) : ''}
+      <div class="field"><span>Data de vencimento</span><input type="date" id="fDate" value="${f.date}"></div>
+      ${f.type !== 'transfer' ? sw('fPaid', 'Efetivada', f.type === 'income' ? 'O dinheiro já entrou' : 'Já foi paga', f.paid) : ''}
+      ${f.type === 'transfer' ? `<div class="grid2"><div class="field"><span>De</span><select id="fFrom">${opts(D().accounts, f.from)}</select></div><div class="field"><span>Para</span><select id="fTo">${opts(D().accounts, f.to)}</select></div></div>` :
+      (f.multi ? `<div class="panel" style="padding:10px;display:flex;flex-direction:column;gap:8px"><span class="lbl">Divisão por categoria</span>
+          ${f.splits.map((sp, i) => `<div data-split="${i}" style="display:flex;gap:6px;align-items:center"><div class="field" style="flex:1.4"><select aria-label="Categoria">${opts(cats, sp.cat)}</select></div><div class="field" style="flex:1"><input inputmode="decimal" placeholder="0,00" value="${esc(sp.amtStr || '')}" aria-label="Valor"></div><button type="button" class="icon-btn" data-rmsplit="${i}" aria-label="Remover">${ICO.close}</button></div>`).join('')}
+          <button type="button" class="btn ghost sm" id="addSplit" style="align-self:flex-start">Adicionar categoria</button>
+          <p class="muted" style="margin:0;font-size:.82rem" id="splitHint"></p></div>` :
+      `<div class="field"><span>Categoria</span><div style="display:flex;gap:6px"><select id="fCat" style="flex:1">${opts(cats, f.cat)}</select><button type="button" class="btn ghost sm" id="newCat" aria-label="Nova categoria">+</button></div></div>
+       <div class="field"><span>Subcategoria</span><div style="display:flex;gap:6px"><select id="fSub" style="flex:1">${subOpts(f.cat, f.sub)}</select><button type="button" class="btn ghost sm" id="newSub" aria-label="Nova subcategoria">+</button></div></div>`) +
+      `<div class="field"><span>${f.type === 'income' ? 'Conta' : 'Conta ou cartão'}</span><select id="fSrc">${D().accounts.filter(a => !a.archived || f.src === 'a:' + a.id).map(a => `<option value="a:${a.id}" ${f.src === 'a:' + a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}${f.type === 'expense' ? D().cards.map(c => `<option value="c:${c.id}" ${f.src === 'c:' + c.id ? 'selected' : ''}>Cartão ${esc(c.name)}</option>`).join('') : ''}</select></div>`}
+      <div class="field"><span>Tags (separe por vírgula)</span><input id="fTags" value="${esc(f.tagsStr)}" list="tagList"><datalist id="tagList">${D().tags.map(x => `<option value="${esc(x)}">`).join('')}</datalist></div>
+      ${!editing ? sw('fCont', 'Salvar e continuar', 'Deixa o formulário aberto para o próximo lançamento', f.cont) : ''}
+      <button type="button" class="btn ghost sm" id="toggleMore" style="align-self:center;color:${tone()}" aria-expanded="${f.more}">${f.more ? 'Menos informações' : 'Mais informações'}</button>
+      ${f.more ? `<div style="display:flex;flex-direction:column;gap:10px">
+        ${f.type !== 'transfer' && f.paid ? `<div class="field"><span>Data de efetivação</span><input type="date" id="fPaidDate" value="${f.paidDate || f.date}"></div>` : ''}
+        <div class="field"><span>Data e hora do lançamento</span><input type="datetime-local" id="fLaunch" value="${esc(f.launch)}"></div>
+        ${f.type !== 'transfer' ? `<div class="field"><span>Encargos ou desconto</span><div class="seg" style="margin-bottom:6px"><button type="button" data-adj="fee" class="${f.adjKind === 'fee' ? 'on' : ''}">Encargos (juros, multa)</button><button type="button" data-adj="disc" class="${f.adjKind === 'disc' ? 'on' : ''}">Desconto</button></div>
+          <input id="fAdj" inputmode="decimal" placeholder="0,00" value="${esc(f.adjStr)}" aria-label="Valor do ajuste">
+          <small class="muted" id="adjHint"></small></div>` : ''}
+        <div class="field"><span>Observações e hashtags</span><textarea id="fNote" maxlength="500" placeholder="Escreva #viagem ou #casa para virar tag" style="min-height:60px">${esc(f.note)}</textarea></div>
+        ${assetsCap ? `<div class="field"><span>Anexos (foto do recibo, nota fiscal em PDF)</span>
+          ${f.att.map((a, i) => `<div style="display:flex;gap:8px;align-items:center"><a href="${esc(a.url)}" target="_blank" rel="noopener" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)">${esc(a.name)}</a><button type="button" class="icon-btn" data-rmatt="${i}" aria-label="Remover anexo">${ICO.close}</button></div>`).join('')}
+          <label class="btn ghost sm" style="align-self:flex-start">Adicionar anexo<input type="file" id="fAtt" accept="image/*,application/pdf" hidden></label></div>` : ''}
+        ${D().goals.length && f.type !== 'transfer' ? `<div class="field"><span>Criar depósito equivalente para o objetivo</span><select id="fGoal"><option value="">Nenhum</option>${opts(D().goals, f.goal)}</select></div>` : ''}
+        ${f.type !== 'transfer' && !f.paid && S().autoPay ? sw('fNoAuto', 'Não efetivar automaticamente', 'Fica pendente mesmo depois da data, até você confirmar', f.noAuto) : ''}
+        ${IGN.map(([k, l]) => sw('fIgn_' + k, l, '', f.ign[k])).join('')}
+      </div>` : ''}
+      <div class="btnrow"><button class="btn" style="flex:1;background:${tone()};color:#fff">${editing ? 'Salvar' : 'Adicionar'}</button>${editing ? '<button type="button" class="btn danger" id="fDel">Excluir</button>' : ''}</div>
+    </form>`;
+
+    el.querySelectorAll('[data-ty]').forEach(b => b.onclick = () => { collect(); f.type = b.dataset.ty; f.cat = null; f.sub = ''; f.multi = false; draw(); });
+    el.querySelectorAll('[data-plus]').forEach(b => b.onclick = () => { collect(); f.amountStr = fmtInput(evalAmount(f.amountStr) + +b.dataset.plus); draw(); });
+    el.querySelector('#aClear').onclick = () => { collect(); f.amountStr = ''; draw(); el.querySelector('#fAmount').focus(); };
+    el.querySelector('#aCalc').onclick = () => { collect(); f.amountStr = fmtInput(evalAmount(f.amountStr)); draw(); };
+    el.querySelector('#txf').addEventListener('input', () => { collect(); hints(); });
+    ['fRep', 'fFreq', 'fInstMode', 'fPaid', 'fCat'].forEach(id => el.querySelector('#' + id)?.addEventListener('change', () => { if (id === 'fCat') el.querySelector('#fSub').value = ''; redraw(); }));
+    el.querySelector('#fMulti')?.addEventListener('change', e => { collect(); f.multi = e.target.checked; if (f.multi && !f.splits.length) f.splits = [{cat: f.cat, amtStr: f.amountStr}, {cat: catsOf()[1]?.id, amtStr: ''}]; draw(); });
+    el.querySelector('#addSplit')?.addEventListener('click', () => { collect(); f.splits.push({cat: catsOf()[0]?.id, amtStr: ''}); draw(); });
+    el.querySelectorAll('[data-rmsplit]').forEach(b => b.onclick = () => { collect(); f.splits.splice(+b.dataset.rmsplit, 1); draw(); });
+    el.querySelectorAll('[data-adj]').forEach(b => b.onclick = () => { collect(); f.adjKind = b.dataset.adj; draw(); });
+    el.querySelector('#toggleMore').onclick = () => { collect(); f.more = !f.more; draw(); };
+    el.querySelector('#fDesc').addEventListener('change', () => { if (!S().autoCat || editing) return; const g = guessCat(el.querySelector('#fDesc').value, f.type); const sel = el.querySelector('#fCat'); if (g && sel && g !== sel.value && [...sel.options].some(o => o.value === g)) { sel.value = g; f.cat = g; f.sub = ''; el.querySelector('#fSub').innerHTML = subOpts(g, ''); } });
+    hints();
+    el.querySelector('#newCat')?.addEventListener('click', () => { collect(); quickName('Nova categoria', name => { const c = {id: uid(), type: f.type === 'income' ? 'income' : 'expense', name, color: PALETTE[D().cats.length % PALETTE.length], subs: []}; D().cats.push(c); store.saveData(); f.cat = c.id; f.sub = ''; draw(); }); });
+    el.querySelector('#newSub')?.addEventListener('click', () => { collect(); quickName('Nova subcategoria em ' + cat(f.cat).name, name => { const c = D().cats.find(x => x.id === f.cat); c.subs ||= []; const s = {id: uid(), name}; c.subs.push(s); store.saveData(); f.sub = s.id; draw(); }); });
+    el.querySelector('#fAtt')?.addEventListener('change', async e => {
+      const file = e.target.files[0]; if (!file) return; collect();
+      if (file.size > 10 * 1024 * 1024) { toast('Arquivo grande demais. O limite é 10 MB.'); return; }
+      toast('Enviando anexo...');
+      try { const r = await assetsCap.upload(file); f.att.push({id: r.id, url: r.url, name: file.name}); toast('Anexo adicionado.'); } catch { toast('Não foi possível enviar o anexo.'); }
+      draw();
+    });
+    el.querySelectorAll('[data-rmatt]').forEach(b => b.onclick = () => { collect(); const [a] = f.att.splice(+b.dataset.rmatt, 1); if (a && !(t.att || []).some(x => x.id === a.id)) assetsCap?.delete(a.id).catch(() => {}); draw(); });
+    el.querySelector('#fDel')?.addEventListener('click', () => { el.closest('.sheet-bg').remove(); deleteTx(t); });
+    el.querySelector('#txf').onsubmit = e => { e.preventDefault(); collect(); if (save()) { if (f.cont && !editing) { Object.assign(f, {amountStr: '', desc: '', note: '', splits: f.multi ? [{cat: f.cat, amtStr: ''}] : [], att: [], goal: ''}); draw(); el.querySelector('#fDesc').focus(); } else el.closest('.sheet-bg').remove(); } };
+  };
+
   const save = () => {
-    const el = document.querySelector('.sheet');
-    const amount = round2(parseMoney(el.querySelector('#fAmount').value));
+    let amount = evalAmount(f.amountStr);
+    const parts = f.multi && f.type === 'expense' ? f.splits.map(s => ({cat: s.cat, sub: '', amt: evalAmount(s.amtStr)})).filter(s => s.amt > 0) : [{cat: f.cat, sub: f.sub, amt: amount}];
+    if (f.multi) { const sum = round2(parts.reduce((s, p) => s + p.amt, 0)); if (!parts.length) { toast('Informe o valor de cada categoria.'); return false; } if (amount > 0 && Math.abs(sum - amount) > 0.009) { toast(`A divisão soma ${money(sum)}, mas o total é ${money(amount)}.`); return false; } amount = sum; }
     if (!(amount > 0)) { toast('Digite um valor maior que zero.'); return false; }
-    const base = {id: t.id || uid(), type, desc: el.querySelector('#fDesc').value.trim(), amount, date: el.querySelector('#fDate').value,
-      tags: el.querySelector('#fTags').value.split(',').map(x => x.trim().replace(/^#/, '')).filter(Boolean), note: el.querySelector('#fNote').value.trim(), created: t.created || Date.now()};
-    if (type === 'transfer') { Object.assign(base, {account: el.querySelector('#fFrom').value, to: el.querySelector('#fTo').value, paid: true}); if (base.account === base.to) { toast('Escolha contas diferentes.'); return false; } }
-    else { const src = el.querySelector('#fSrc').value; if (src.startsWith('c:')) base.card = src.slice(2); else base.account = src.slice(2); base.cat = el.querySelector('#fCat').value; base.paid = el.querySelector('#fPaid').checked; }
-    base.tags.forEach(x => { if (!D().tags.includes(x)) D().tags.push(x); });
+    const adjV = f.type === 'transfer' ? 0 : evalAmount(f.adjStr), adjSign = f.adjKind === 'fee' ? 1 : -1;
+    if (adjV > 0) { parts[0].amt = round2(parts[0].amt + adjSign * adjV); amount = round2(amount + adjSign * adjV); if (!(parts[0].amt > 0)) { toast('O desconto é maior que o valor.'); return false; } }
+    if (!f.desc.trim()) { toast('Escreva uma descrição.'); return false; }
+    if (!f.date) { toast('Escolha a data de vencimento.'); return false; }
+    const hashtags = [...f.note.matchAll(/#([\wÀ-ú-]+)/g)].map(m => m[1]);
+    const tags = [...new Set([...f.tagsStr.split(',').map(x => x.trim().replace(/^#/, '')).filter(Boolean), ...hashtags])];
+    tags.forEach(x => { if (!D().tags.includes(x)) D().tags.push(x); });
+    const ign = Object.fromEntries(Object.entries(f.ign).filter(([, v]) => v));
+    const common = {type: f.type, desc: f.desc.trim(), tags, note: f.note.trim(), created: t.created || Date.now(), launch: f.launch || undefined};
+    if (adjV > 0) common.adj = {kind: f.adjKind, v: adjV};
+    if (f.att.length) common.att = f.att;
+    if (Object.keys(ign).length) common.ign = ign;
+    if (f.type === 'transfer') { if (f.from === f.to) { toast('Escolha contas diferentes.'); return false; } Object.assign(common, {account: f.from, to: f.to, paid: true}); }
+    else { if (f.src.startsWith('c:')) common.card = f.src.slice(2); else common.account = f.src.slice(2); common.paid = f.paid; if (f.paid) common.paidDate = f.paidDate && f.paidDate !== f.date ? f.paidDate : undefined; if (!f.paid && f.noAuto) common.noAuto = true; }
+
     if (editing) {
-      Object.assign(base, {group: t.group, inst: t.inst, fixed: t.fixed});
-      const all = el.querySelector('#fAll')?.checked;
-      if (all && t.group) store.allTx().filter(x => x.group === t.group && x.date > t.date).forEach(x => store.updateTx({...x, desc: base.desc, amount: base.amount, cat: base.cat, account: base.account, card: base.card, tags: base.tags}));
-      store.updateTx(base); store.saveData(); toast('Lançamento salvo.');
-    } else {
-      const rep = el.querySelector('#fRep').value, n = Math.max(2, Math.min(120, +el.querySelector('#fTimes').value || 2));
-      const created = [];
-      if (rep === 'no') created.push(base);
-      else {
-        const group = uid(); const each = rep === 'inst' && el.querySelector('#fInstMode').value === 'total' ? round2(amount / n) : amount;
-        const day = +base.date.slice(8);
-        for (let i = 0; i < n; i++) {
-          const x = {...base, id: uid(), group, amount: rep === 'inst' && i === n - 1 && el.querySelector('#fInstMode').value === 'total' ? round2(amount - each * (n - 1)) : each, date: dateIn(addYm(ymOf(base.date), i), day), paid: i === 0 ? base.paid : false};
-          if (rep === 'inst') x.inst = {n: i + 1, of: n}; else x.fixed = true;
-          created.push(x);
-        }
-      }
-      created.forEach(x => store.addTx(x)); store.saveData();
-      lowBalanceCheck(created[0]);
-      toast(created.length > 1 ? `${created.length} lançamentos criados.` : 'Lançamento adicionado.', () => { created.forEach(x => store.removeTx(x.id)); render(); });
+      const base = {...common, id: t.id, amount, date: f.date, cat: f.type === 'transfer' ? undefined : f.cat, sub: f.sub || undefined, group: t.group, inst: t.inst, fixed: t.fixed, split: t.split, goal: t.goal};
+      if (f.goal && f.goal !== t.goal) { const g = D().goals.find(x => x.id === f.goal); if (g) { g.saved = round2(g.saved + amount); base.goal = f.goal; } }
+      if (f.applyAll && t.group) store.allTx().filter(x => x.group === t.group && x.date > t.date).forEach(x => store.updateTx({...x, desc: base.desc, amount: base.amount, cat: base.cat, sub: base.sub, account: base.account, card: base.card, tags: base.tags, ign: base.ign}));
+      store.updateTx(JSON.parse(JSON.stringify(base))); store.saveData(); render(); toast('Lançamento salvo.'); return true;
     }
-    render(); return true;
+    const created = []; const splitId = parts.length > 1 ? uid() : undefined;
+    for (const p of parts) {
+      const n = f.rep === 'inst' ? Math.max(2, Math.min(120, f.times)) : f.rep === 'fixed' ? Math.max(2, Math.min(60, f.fixedMonths)) : 1;
+      const group = n > 1 ? uid() : undefined;
+      const each = f.rep === 'inst' && f.instMode === 'total' ? round2(p.amt / n) : p.amt;
+      for (let i = 0; i < n; i++) {
+        const x = {...common, id: uid(), amount: f.rep === 'inst' && f.instMode === 'total' && i === n - 1 ? round2(p.amt - each * (n - 1)) : each,
+          date: n > 1 ? addPeriod(f.date, i, f.rep === 'fixed' ? 'm' : f.freq) : f.date, cat: f.type === 'transfer' ? undefined : p.cat, sub: p.sub || undefined, group, split: splitId};
+        if (i > 0 && f.type !== 'transfer') { x.paid = false; delete x.paidDate; }
+        if (f.rep === 'inst') x.inst = {n: i + 1, of: n}; if (f.rep === 'fixed') x.fixed = true;
+        created.push(JSON.parse(JSON.stringify(x)));
+      }
+    }
+    if (f.goal) { const g = D().goals.find(x => x.id === f.goal); if (g) { const dep = created.filter(x => x.date === f.date).reduce((s, x) => s + x.amount, 0); g.saved = round2(g.saved + dep); created.filter(x => x.date === f.date).forEach(x => x.goal = f.goal); } }
+    created.forEach(x => store.addTx(x)); store.saveData();
+    lowBalanceCheck(created[0]);
+    render();
+    toast(created.length > 1 ? `${created.length} lançamentos criados.` : 'Lançamento adicionado.', () => { created.forEach(x => store.removeTx(x.id)); if (f.goal) { const g = D().goals.find(x => x.id === f.goal); if (g) { g.saved = round2(g.saved - created.filter(x => x.goal).reduce((s, x) => s + x.amount, 0)); store.saveData(); } } render(); });
+    return true;
   };
-  sheet('', el => draw(el));
+  sheet('', e => { el = e; draw(); });
+}
+function nowLocal() { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function quickName(title, onOk) {
+  sheet(`${sheetHead(title)}<form id="qn" style="display:flex;gap:8px"><div class="field" style="flex:1"><input id="qnName" required maxlength="30" aria-label="Nome"></div><button class="btn">Criar</button></form>`,
+    (el, close) => el.querySelector('#qn').onsubmit = e => { e.preventDefault(); const n = el.querySelector('#qnName').value.trim(); if (n) { close(); onOk(n); } });
 }
 function lowBalanceCheck(t) {
   if (!S().alertLowBalance || t.type !== 'expense' || t.card || !t.account) return;
@@ -840,7 +979,7 @@ function lowBalanceCheck(t) {
 function deleteTx(t) {
   const doDel = all => {
     const gone = all ? store.allTx().filter(x => x.group === t.group && x.date >= t.date) : [t];
-    gone.forEach(x => store.removeTx(x.id)); render();
+    gone.forEach(x => { store.removeTx(x.id); const g = x.goal && D().goals.find(y => y.id === x.goal); if (g) g.saved = round2(g.saved - x.amount); }); store.saveData(); render();
     toast(gone.length > 1 ? `${gone.length} lançamentos excluídos.` : 'Lançamento excluído.', () => { gone.forEach(x => store.addTx(x)); render(); });
   };
   if (t.group) sheet(`${sheetHead('Excluir lançamento')}<p class="muted" style="margin:0">Este lançamento faz parte de uma série.</p><div class="btnrow"><button class="btn danger" id="d1">Só este</button><button class="btn danger" id="dAll">Este e os próximos</button></div>`,
@@ -904,8 +1043,10 @@ function catForm(id, type) {
   const c = id ? cat(id) : {name: '', type, color: PALETTE[D().cats.length % PALETTE.length]};
   sheet(`${sheetHead(id ? 'Editar categoria' : 'Nova categoria')}<form id="kf" style="display:flex;flex-direction:column;gap:10px">
     <div class="field"><span>Nome</span><input id="kName" required maxlength="30" value="${esc(c.name)}"></div><div class="field"><span>Cor</span><input type="color" id="kColor" value="${c.color}"></div>
+    <div class="field"><span>Subcategorias (uma por linha)</span><textarea id="kSubs" style="min-height:70px" placeholder="Ex.: Ônibus&#10;Uber&#10;Combustível">${esc((c.subs || []).map(x => x.name).join('\n'))}</textarea></div>
     <div class="btnrow"><button class="btn" style="flex:1">Salvar</button>${id ? '<button type="button" class="btn danger" id="kDel">Excluir</button>' : ''}</div></form>`, (el, close) => {
-    el.querySelector('#kf').onsubmit = e => { e.preventDefault(); const d = {name: el.querySelector('#kName').value.trim(), color: el.querySelector('#kColor').value};
+    el.querySelector('#kf').onsubmit = e => { e.preventDefault(); const names = el.querySelector('#kSubs').value.split('\n').map(x => x.trim()).filter(Boolean); const old = c.subs || [];
+      const d = {name: el.querySelector('#kName').value.trim(), color: el.querySelector('#kColor').value, subs: names.map(n => old.find(o => o.name === n) || {id: uid(), name: n})};
       if (id) Object.assign(D().cats.find(x => x.id === id), d); else D().cats.push({id: uid(), type, ...d}); store.saveData(); close(); render(); };
     el.querySelector('#kDel')?.addEventListener('click', () => { if (store.allTx().some(t => t.cat === id)) { toast('Há lançamentos nesta categoria. Mude-os antes de excluir.'); return; } D().cats = D().cats.filter(x => x.id !== id); delete D().budgets[id]; store.saveData(); close(); render(); });
   });
@@ -1111,7 +1252,7 @@ function inboxEdit(id) {
 function claudeTools() {
   const findCat = (n, ty) => D().cats.find(c => (!ty || c.type === ty) && norm(c.name) === norm(n));
   const findSrc = n => { const a = D().accounts.find(a => norm(a.name) === norm(n)); if (a) return {account: a.id}; const c = D().cards.find(c => norm(c.name) === norm(n) || norm('cartao ' + c.name) === norm(n)); if (c) return {card: c.id}; return null; };
-  const view = t => ({id: t.id, tipo: {expense: 'despesa', income: 'receita', transfer: 'transferência', cardpay: 'pagamento de fatura'}[t.type], descricao: t.desc, valor: t.amount, data: t.date, categoria: t.cat ? cat(t.cat).name : undefined, origem: t.type === 'transfer' ? `${acc(t.account)?.name} -> ${acc(t.to)?.name}` : sourceName(t), efetivada: t.paid || !!t.card, tags: t.tags?.length ? t.tags : undefined, parcela: t.inst ? `${t.inst.n}/${t.inst.of}` : undefined});
+  const view = t => ({id: t.id, tipo: {expense: 'despesa', income: 'receita', transfer: 'transferência', cardpay: 'pagamento de fatura'}[t.type], descricao: t.desc, valor: t.amount, data: t.date, categoria: t.cat ? cat(t.cat).name : undefined, subcategoria: subName(t) || undefined, origem: t.type === 'transfer' ? `${acc(t.account)?.name} -> ${acc(t.to)?.name}` : sourceName(t), efetivada: t.paid || !!t.card, tags: t.tags?.length ? t.tags : undefined, parcela: t.inst ? `${t.inst.n}/${t.inst.of}` : undefined});
   return [
     {name: 'resumo_do_mes', description: 'Retorna totais de um mês (receitas, despesas, saldos das contas, faturas dos cartões, despesas por categoria, orçamentos e nota de saúde financeira). Use primeiro para perguntas gerais.',
       inputSchema: {type: 'object', properties: {mes: {type: 'string', description: 'AAAA-MM; padrão: mês aberto no app'}}},
@@ -1305,7 +1446,9 @@ function seedDemo() {
   $('#view').innerHTML = '<div class="empty"><b>Carregando suas finanças…</b></div>';
   await store.init();
   try { const [s, dl] = await Promise.all([claude.use('sample'), claude.use('downloads')]); sampleFn = s; downloadsCap = dl; } catch {}
+  try { assetsCap = await claude.use('assets'); } catch {}
   if (!store.meta.current) { store.data = blankData(); return onboarding(); }
+  if (S().autoPay) { const td = todayStr(); let n = 0; store.allTx().forEach(t => { if (!t.paid && !t.card && !t.noAuto && t.type !== 'transfer' && t.date <= td) { t.paid = true; n++; store.saveMonth(ymOf(t.date)); } }); if (n) setTimeout(() => toast(`${n} lançamento(s) efetivado(s) automaticamente.`), 600); }
   const h = (location.hash || '').slice(1); if (VIEWS[h]) ui.view = h;
   render();
   if (S().lockOnStart && S().pin) pinSheet('unlock');
