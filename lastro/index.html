@@ -346,10 +346,10 @@ function totalBalance(ym, onlyPaid) {
   return round2(D().accounts.filter(a => !a.archived && a.inTotal !== false).reduce((s, a) => s + accountBalance(a.id, onlyPaid && ym === ymOf(todayStr()) ? todayStr() : endOf(ym), onlyPaid), 0));
 }
 function monthTx(ym) { return store.months[ym] || []; }
-function monthTotals(ym) {
+function monthTotals(ym, withIgn) {
   let inc = 0, exp = 0, incP = 0, expP = 0, cardExp = 0, debExp = 0, pendN = 0, pendV = 0;
   for (const t of monthTx(ym)) {
-    if (t.ign?.totals) continue;
+    if (t.ign?.totals && !withIgn) continue;
     if (t.type === 'income') { inc += t.amount; if (t.paid) incP += t.amount; }
     if (t.type === 'expense') { exp += t.amount; if (t.paid || t.card) expP += t.amount; t.card ? cardExp += t.amount : debExp += t.amount; if (!t.paid && !t.card) { pendN++; pendV += t.amount; } }
   }
@@ -460,7 +460,7 @@ const emptyBox = (title, text, btn) => `<div class="empty"><b>${title}</b>${text
 
 /* ============ telas ============ */
 const VIEWS = {};
-const TITLES = {inicio: 'Lastro', lanc: 'Lançamentos', planejar: 'Planejar', mais: 'Mais', claude: 'Claude', cartoes: 'Cartões de crédito', contas: 'Contas', extrato: 'Extrato', graficos: 'Gráficos', calendario: 'Calendário', sync: 'Sincronizar banco', categorias: 'Categorias', tags: 'Tags', emprestimos: 'Empréstimos', config: 'Configurações', perfis: 'Perfis', restauracao: 'Pontos de restauração', saude: 'Saúde financeira', resumo: 'Configurar resumo', busca: 'Pesquisar'};
+const TITLES = {inicio: 'Lastro', lanc: 'Lançamentos', planejar: 'Planejar', mais: 'Mais', claude: 'Claude', cartoes: 'Cartões de crédito', contas: 'Contas', extrato: 'Extrato', graficos: 'Gráficos', calendario: 'Calendário', sync: 'Sincronizar banco', categorias: 'Categorias', tags: 'Tags', emprestimos: 'Empréstimos', config: 'Configurações', perfis: 'Perfis', restauracao: 'Pontos de restauração', saude: 'Saúde financeira', resumo: 'Configurar resumo', busca: 'Pesquisar', catDetail: 'Detalhes da categoria'};
 const MONTHLESS = ['mais', 'claude', 'sync', 'categorias', 'tags', 'config', 'perfis', 'restauracao', 'emprestimos', 'resumo', 'busca'];
 
 /* ============ tela inicial: quadros configuráveis ============ */
@@ -551,9 +551,9 @@ const cardTools = (title, la, id) => `<div style="display:flex;gap:2px;flex:none
 const panelCard = (title, body, link) => { const la = linkAttr(link); return `<section class="panel"><div class="ph"><h2 ${la ? `class="clickable" ${la}` : ''}>${title}</h2>${cardTools(title, la, curCard)}</div>${body}</section>`; };
 const legendRows = items => `<div class="legend">${items.map(x => `<div ${x.f ? `class="clickable" ${x.f}` : ''}><i style="background:${x.c.color}"></i><span>${esc(x.c.name)}</span><b class="num">${money(x.v)}</b>${x.f ? '<span class="muted" aria-hidden="true">›</span>' : ''}</div>`).join('')}</div>`;
 const pctTxt = (v, t) => t ? Math.round(v / t * 100) + '%' : '0%';
-function hbars(items, signed) {
+function hbars(items, signed, showPct = true) {
   const max = Math.max(1, ...items.map(x => Math.abs(x.v))); const tot = items.reduce((s, x) => s + Math.abs(x.v), 0);
-  return items.map(x => `<div style="margin-bottom:9px" ${x.f ? `class="clickable" ${x.f}` : ''}><div style="display:flex;justify-content:space-between;gap:8px;font-size:.88rem"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.c.name)}</span><span class="num ${signed && x.v < 0 ? 'exp' : ''}">${money(x.v)} · ${pctTxt(Math.abs(x.v), tot)}</span></div><div class="bar"><i style="width:${Math.abs(x.v) / max * 100}%;background:${signed && x.v < 0 ? 'var(--exp)' : x.c.color}"></i></div></div>`).join('');
+  return items.map(x => `<div style="margin-bottom:9px" ${x.f ? `class="clickable" ${x.f}` : ''}><div style="display:flex;justify-content:space-between;gap:8px;font-size:.88rem"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.c.name)}</span><span class="num ${signed && x.v < 0 ? 'exp' : ''}">${money(x.v)}${showPct ? ' · ' + pctTxt(Math.abs(x.v), tot) : ''}</span></div><div class="bar"><i style="width:${Math.abs(x.v) / max * 100}%;background:${signed && x.v < 0 ? 'var(--exp)' : x.c.color}"></i></div></div>`).join('');
 }
 function multiLine(series, colors, labels) {
   const W = 320, H = 150, pb = 22, pl = 8;
@@ -581,9 +581,9 @@ function weekBuckets(ym, type) {
   const tx = monthTx(ym).filter(t => t.type === type && !t.ign?.stats);
   return edges.map(([a, b]) => ({a, b, v: round2(tx.filter(t => +t.date.slice(8) >= a && +t.date.slice(8) <= b).reduce((s, t) => s + t.amount, 0))}));
 }
-function disc(ym, type) {
+function disc(ym, type, withIgn) {
   const td = todayStr(), lim = shiftDate(td, 7); const r = {ok: 0, soon: 0, late: 0, far: 0};
-  monthTx(ym).filter(t => t.type === type && !t.ign?.totals).forEach(t => { const st = statusOf(t); if (st === 'ok') r.ok += t.amount; else if (st === 'late') r.late += t.amount; else if (t.date <= lim) r.soon += t.amount; else r.far += t.amount; });
+  monthTx(ym).filter(t => t.type === type && (withIgn || !t.ign?.totals)).forEach(t => { const st = statusOf(t); if (st === 'ok') r.ok += t.amount; else if (st === 'late') r.late += t.amount; else if (t.date <= lim) r.soon += t.amount; else r.far += t.amount; });
   return r;
 }
 function byKind(ym) {
@@ -600,6 +600,50 @@ function budgetDetail(ym, type) {
 }
 const diffLine = (cur, old, more) => { const d = round2(cur - old); if (!d) return '<span class="muted">Igual ao período anterior</span>'; const up = d > 0; return `<span class="${up === more ? 'exp' : 'inc'}">${up ? '▲' : '▼'} ${money(Math.abs(d))} a ${up ? 'mais' : 'menos'}${old ? ` (${Math.round(Math.abs(d) / old * 100)}%)` : ''}</span>`; };
 
+/* opções de cada quadro (menu ⋮) */
+const CARD_OPTS = {
+  fluxo: [{k: 'pend', l: 'Exibir realizados e pendentes', d: true}, {k: 'det', l: 'Exibição detalhada', d: true}, {k: 'vals', l: 'Exibir todos os valores', d: true}, {k: 'ini', l: 'Considerar saldo inicial', d: true}, {k: 'trf', l: 'Transferências', d: false}],
+  contas: [{k: 'onlyBal', l: 'Apenas com saldo', d: false}, {k: 'unsummed', l: 'Considerar não somadas', d: true}, {k: 'groups', l: 'Considerar grupos', d: true}, {k: 'prev', l: 'Exibir previsto', d: true}],
+  visao: [{k: 'view', l: 'Exibição', d: 'grid', ch: [['grid', 'Grade'], ['list', 'Lista']]}, {k: 'bal', l: 'Saldo nas contas', d: false}, {k: 'inc', l: 'Receitas', d: true}, {k: 'exp', l: 'Despesas', d: true}, {k: 'trf', l: 'Transferências', d: 'balance', ch: [['balance', 'Balanço'], ['transfers', 'Transferências'], ['none', 'Ocultar']]}, {k: 'econ', l: 'Economia mensal', d: false}, {k: 'cards', l: 'Cartões de crédito', d: true}, {k: 'prev', l: 'Exibir valores previstos', d: true}, {k: 'ign', l: 'Considerar ignoradas nos totais', d: false}],
+  economia: [{k: 'prev', l: 'Previsto', d: true}, {k: 'ign', l: 'Considerar ignoradas nos totais', d: false}, {k: 'ini', l: 'Considerar saldo inicial', d: false}, {k: 'feedback', l: 'Feedback', d: true}],
+  previsto: [{k: 'cons', l: 'Exibir consolidado', d: false}],
+  cartoes: [{k: 'onlyDue', l: 'Apenas com fatura a pagar', d: false}, {k: 'paid', l: 'Considerar pagas', d: true}, {k: 'close', l: 'Exibir fechamento', d: true}, {k: 'due', l: 'Exibir vencimento', d: false}, {k: 'next', l: 'Exibir próxima fatura', d: true}],
+  ultimasDesp: [{k: 'n', l: 'Quantidade', d: 5, ch: [[5, 'Últimos 5'], [10, 'Últimos 10'], [15, 'Últimos 15']]}, {k: 'note', l: 'Exibir observações', d: false}],
+  ultimasRec: [{k: 'n', l: 'Quantidade', d: 5, ch: [[5, 'Últimos 5'], [10, 'Últimos 10'], [15, 'Últimos 15']]}, {k: 'note', l: 'Exibir observações', d: false}],
+  discDesp: [{k: 'ign', l: 'Considerar não somadas', d: false}],
+  discRec: [{k: 'ign', l: 'Considerar não somadas', d: false}],
+  relatorios: [{k: 'ign', l: 'Considerar não somadas', d: false}],
+  recXdesp: [{k: 'ign', l: 'Considerar não somadas', d: false}, {k: 'onlyVar', l: 'Apenas variáveis', d: false}],
+  dadosDesp: [{k: 'ref', l: 'Data de referência', d: 'date', ch: [['date', 'Vencimento'], ['paid', 'Efetivação'], ['launch', 'Lançamento']]}, {k: 'noFixed', l: 'Ignorar fixas', d: false}, {k: 'noInst', l: 'Ignorar parceladas', d: false}],
+  fluxoOrc: [{k: 'cons', l: 'Exibir consolidado', d: false}],
+  balancoTipo: [{k: 'prev', l: 'Previsto', d: true}],
+  orcDesp: [{k: 'prev', l: 'Previsto', d: true}, {k: 'bal', l: 'Exibir saldo', d: false}, {k: 'today', l: 'Exibir marcação de hoje', d: false}, {k: 'total', l: 'Exibir total', d: true}],
+  orcRec: [{k: 'prev', l: 'Previsto', d: true}, {k: 'bal', l: 'Exibir saldo', d: false}, {k: 'today', l: 'Exibir marcação de hoje', d: false}, {k: 'total', l: 'Exibir total', d: true}],
+  rankDesp: [{k: 'ref', l: 'Data de referência', d: 'date', ch: [['date', 'Vencimento'], ['paid', 'Efetivação']]}, {k: 'top', l: 'Top categorias', d: 5, ch: [[3, 'Top 3'], [5, 'Top 5'], [10, 'Top 10']]}, {k: 'pct', l: 'Exibir percentual', d: true}, {k: 'sub', l: 'Top subcategorias', d: false}],
+  rankRec: [{k: 'ref', l: 'Data de referência', d: 'date', ch: [['date', 'Vencimento'], ['paid', 'Efetivação']]}, {k: 'top', l: 'Top categorias', d: 5, ch: [[3, 'Top 3'], [5, 'Top 5'], [10, 'Top 10']]}, {k: 'pct', l: 'Exibir percentual', d: true}, {k: 'sub', l: 'Top subcategorias', d: false}],
+  rankContas: [{k: 'pct', l: 'Exibir percentual', d: true}],
+  saldoGlobal: [{k: 'onlyBal', l: 'Apenas com saldo', d: false}, {k: 'unsummed', l: 'Considerar não somadas', d: true}]
+};
+const CARD_HELP = {
+  fluxo: 'Entradas somam o saldo inicial do mês (se ligado) com as receitas; saídas são as despesas. Consolidado conta só o que já foi efetivado; previsto inclui os pendentes. Ligue "Transferências" para somar também o dinheiro que passou entre suas contas.',
+  contas: 'Se o saldo de uma conta não bate com o banco, abra o menu ⋮ da conta e use "Reajustar saldo". O app cria um ajuste que corrige a diferença sem afetar gráficos, orçamentos e economia. Confira também se há lançamentos pendentes ou com data errada.',
+  dadosDesp: 'Compara seus gastos com o mesmo período anterior: hoje com o mesmo dia da semana passada, a semana com a semana passada até o mesmo dia, e o mês com o mês passado até o mesmo dia. A data de referência define qual data de cada lançamento é usada.',
+  balancoTipo: 'Mostra quanto cada tipo de conta cresceu ou caiu no mês: a diferença entre o saldo no início do mês e o saldo no fim (previsto, ou atual se "Previsto" estiver desligado).',
+  economia: 'Economia é o que sobra das receitas depois das despesas do mês. "Previsto" inclui lançamentos pendentes; desligado, conta só o que já foi efetivado. "Considerar saldo inicial" soma o saldo do começo do mês às receitas.'
+};
+const O = (id, k) => { const v = S().cardOpts?.[id]?.[k]; if (v !== undefined) return v; return (CARD_OPTS[id] || []).find(o => o.k === k)?.d; };
+const setO = (id, k, v) => { S().cardOpts ||= {}; S().cardOpts[id] ||= {}; S().cardOpts[id][k] = v; store.saveData(); };
+const refDate = (t, ref) => ref === 'paid' ? (t.paid || t.card ? (t.paidDate || t.date) : null) : ref === 'launch' ? (t.launch || t.date).slice(0, 10) : t.date;
+function sumBy(type, from, to, o = {}) {
+  return round2(store.allTx().filter(t => { if (t.type !== type || (!o.withIgn && t.ign?.stats)) return false; if (o.noFixed && t.fixed) return false; if (o.noInst && t.inst) return false; if (o.onlyVar && (t.fixed || t.inst)) return false; const d = refDate(t, o.ref); return d && d >= from && d <= to; }).reduce((s, t) => s + t.amount, 0));
+}
+function catTotals(ym, type, o = {}) {
+  const m = {}; const from = ym + '-01', to = endOf(ym);
+  store.allTx().forEach(t => { if (t.type !== type || t.ign?.stats) return; const d = refDate(t, o.ref || 'date'); if (!d || d < from || d > to) return; const key = o.sub ? t.cat + '|' + (t.sub || '') : t.cat; m[key] = (m[key] || 0) + t.amount; });
+  return Object.entries(m).map(([key, v]) => { const [cid, sid] = key.split('|'); const c = cat(cid); const sn = sid ? (c.subs || []).find(s => s.id === sid)?.name : ''; return {id: cid, v: round2(v), c: {name: c.name + (o.sub ? (sn ? ' › ' + sn : ' › sem subcategoria') : ''), color: c.color}, f: `data-act="catDetail" data-v="${cid}"`}; }).sort((a, b) => b.v - a.v);
+}
+const accRowMenu = a => `<button class="icon-btn tool" data-act="accMenu" data-v="${a.id}" aria-label="Opções da conta ${esc(a.name)}">${ICO.dots}</button>`;
+
 const HOME = {
   busca: () => `<form class="panel" id="homeSearch" style="display:flex;gap:8px;padding:10px"><div class="field" style="flex:1"><input id="homeSearchQ" type="search" placeholder="Pesquisar em todos os lançamentos" aria-label="Pesquisar em todos os lançamentos"></div><button class="btn">Buscar</button></form>`,
   claudeBox: () => `<form class="panel" id="homeAsk" style="display:flex;gap:8px;padding:10px;align-items:center"><svg viewBox="0 0 24 24" width="22" height="22" fill="var(--accent)" style="flex:none"><path d="M12 2l1.8 5.6L19.5 9l-5.7 1.6L12 16l-1.8-5.4L4.5 9l5.7-1.4zM18.5 14l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"/></svg><div class="field" style="flex:1"><input id="homeAskQ" placeholder="Como posso ajudar você hoje?" aria-label="Pergunta para o Claude"></div><button class="btn">Perguntar</button></form>`,
@@ -609,44 +653,74 @@ const HOME = {
     <div class="stat"><span class="lbl">Previsto no fim do mês</span><b class="num">${money(c.prev)}</b></div></section>`,
   pendentes: c => c.mt.pendN ? `<section class="panel"><div class="row clickable" data-act="go" data-v="lanc" data-tab="pend"><div class="st late">${ICO.warn}</div><div class="grow"><div class="t">Você tem ${c.mt.pendN} despesa(s) pendente(s)</div><div class="s">Total de ${money(c.mt.pendV)} neste mês</div></div>${ICO.chev}</div></section>` : '',
   fluxo: c => {
+    const id = 'fluxo', showPend = O(id, 'pend'), ini = O(id, 'ini') ? c.inicial : 0;
     const td = disc(c.ym, 'income'), dd = disc(c.ym, 'expense');
-    const entC = round2(td.ok), entP = round2(td.ok + td.soon + td.late + td.far), saiC = round2(dd.ok), saiP = round2(dd.ok + dd.soon + dd.late + dd.far);
-    const balC = round2(c.inicial + entC - saiC), balP = round2(c.inicial + entP - saiP);
-    const max = Math.max(1, c.inicial + entP, saiP, Math.abs(balP), Math.abs(balC)); const h = v => Math.max(0, v) / max * 120;
-    const col = (lbl, parts, total, f) => `<div class="clickable" ${f} style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;min-width:0"><b class="num" style="font-size:.78rem">${money(total)}</b><div style="width:70%;display:flex;flex-direction:column-reverse;height:124px;justify-content:flex-start">${parts.map(([v, color, op]) => `<div style="height:${h(v)}px;background:${color};opacity:${op || 1};border-radius:4px;margin-top:2px"></div>`).join('')}</div><span class="muted" style="font-size:.78rem">${lbl}</span></div>`;
+    let trfIn = 0; if (O(id, 'trf')) monthTx(c.ym).filter(t => t.type === 'transfer').forEach(t => trfIn += t.amount);
+    const entC = round2(td.ok + trfIn), entP = round2(td.ok + td.soon + td.late + td.far + trfIn), saiC = round2(dd.ok + trfIn), saiP = round2(dd.ok + dd.soon + dd.late + dd.far + trfIn);
+    const balC = round2(ini + entC - saiC), balP = round2(ini + entP - saiP);
+    const max = Math.max(1, ini + entP, saiP, Math.abs(balP), Math.abs(balC)); const h = v => Math.max(0, v) / max * 120;
+    const col = (lbl, parts, total, f) => `<div class="clickable" ${f} style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;min-width:0">${O(id, 'vals') ? `<b class="num" style="font-size:.78rem">${money(total)}</b>` : ''}<div style="width:70%;display:flex;flex-direction:column-reverse;height:124px;justify-content:flex-start">${parts.filter(p => showPend || p[2] !== .4).map(([v, color, op]) => `<div style="height:${h(v)}px;background:${color};opacity:${op || 1};border-radius:4px;margin-top:2px"></div>`).join('')}</div><span class="muted" style="font-size:.78rem">${lbl}</span></div>`;
     return panelCard('Fluxo de caixa', `<div style="display:flex;gap:8px;align-items:flex-end">
-      ${col('Entradas', [[c.inicial, 'var(--muted)', .5], [entC, 'var(--inc)'], [entP - entC, 'var(--inc)', .4]], c.inicial + entP, fAttr({tab: 'income'}))}
-      ${col('Saídas', [[saiC, 'var(--exp)'], [saiP - saiC, 'var(--exp)', .4]], saiP, fAttr({tab: 'expense'}))}
-      ${col('Balanço', [[balC, 'var(--trf)'], [balP - balC, 'var(--trf)', .4]], balP, 'data-act="go" data-v="extrato"')}</div>
-      <div class="tablewrap" style="margin-top:10px"><table><thead><tr><th></th><th style="text-align:right">Consolidado</th><th style="text-align:right">Previsto</th></tr></thead><tbody>
-      <tr><td>Saldo inicial</td><td class="num" style="text-align:right" colspan="2">${money(c.inicial)}</td></tr>
-      <tr><td class="inc">Entradas</td><td class="num" style="text-align:right">${money(entC)}</td><td class="num" style="text-align:right">${money(entP)}</td></tr>
-      <tr><td class="exp">Saídas</td><td class="num" style="text-align:right">${money(saiC)}</td><td class="num" style="text-align:right">${money(saiP)}</td></tr>
-      <tr><td class="trf">Balanço</td><td class="num" style="text-align:right">${money(balC)}</td><td class="num" style="text-align:right">${money(balP)}</td></tr></tbody></table></div>
-      <p class="muted" style="font-size:.78rem;margin:6px 0 0">A parte mais clara de cada barra é o que ainda está pendente.</p>`, 'lanc');
+      ${col('Entradas', [[ini, 'var(--muted)', .5], [entC, 'var(--inc)'], [entP - entC, 'var(--inc)', .4]], showPend ? ini + entP : ini + entC, fAttr({tab: 'income'}))}
+      ${col('Saídas', [[saiC, 'var(--exp)'], [saiP - saiC, 'var(--exp)', .4]], showPend ? saiP : saiC, fAttr({tab: 'expense'}))}
+      ${col('Balanço', [[balC, 'var(--trf)'], [balP - balC, 'var(--trf)', .4]], showPend ? balP : balC, 'data-act="go" data-v="extrato"')}</div>
+      ${O(id, 'det') ? `<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th></th><th style="text-align:right">Consolidado</th>${showPend ? '<th style="text-align:right">Previsto</th>' : ''}</tr></thead><tbody>
+      ${O(id, 'ini') ? `<tr><td>Saldo inicial</td><td class="num" style="text-align:right" colspan="2">${money(c.inicial)}</td></tr>` : ''}
+      <tr><td class="inc">Entradas</td><td class="num" style="text-align:right">${money(entC)}</td>${showPend ? `<td class="num" style="text-align:right">${money(entP)}</td>` : ''}</tr>
+      <tr><td class="exp">Saídas</td><td class="num" style="text-align:right">${money(saiC)}</td>${showPend ? `<td class="num" style="text-align:right">${money(saiP)}</td>` : ''}</tr>
+      <tr><td class="trf">Balanço</td><td class="num" style="text-align:right">${money(balC)}</td>${showPend ? `<td class="num" style="text-align:right">${money(balP)}</td>` : ''}</tr></tbody></table></div>` : ''}
+      ${showPend ? '<p class="muted" style="font-size:.78rem;margin:6px 0 0">A parte mais clara de cada barra é o que ainda está pendente.</p>' : ''}`, 'lanc');
   },
-  contas: c => panelCard('Contas', c.accs.length ? accOrder(c.accs.filter(a => a.showHome !== false)).map(a => `<div class="row clickable" data-act="go" data-v="extrato" data-acc="${a.id}" ${a.parent ? 'style="padding-left:22px"' : ''}>${accAvatar(a)}<div class="grow"><div class="t">${a.parent ? '↳ ' : ''}${esc(a.name)}</div><div class="s">${esc(kindOf(a.kind).name)}${a.overdraft ? ' · cheque especial ' + money(a.overdraft) : ''}</div></div><div class="v num">${money(accountBalance(a.id, c.isCur ? todayStr() : endOf(c.ym), true))}<small>Previsto ${money(accountBalance(a.id, endOf(c.ym), false))}</small></div></div>`).join('') + `<div class="row"><div class="grow"><b>Total</b></div><div class="v num">${money(c.atual)}<small>Previsto ${money(c.prev)}</small></div></div>`
-    : emptyBox('Nenhuma conta ainda', 'Cadastre sua conta corrente, carteira ou poupança.', '<button class="btn sm" data-act="accForm">Adicionar conta</button>'), 'contas', 'Gerenciar'),
-  visao: c => panelCard('Visão geral', `<div class="grid2">
-    <div class="stat clickable" ${fAttr({tab: 'income'})}><span class="lbl">Receitas ›</span><b class="num inc">${money(c.mt.incP)}</b><span class="muted" style="font-size:.78rem">Previsto ${money(c.mt.inc)}</span></div>
-    <div class="stat clickable" ${fAttr({tab: 'expense'})}><span class="lbl">Despesas ›</span><b class="num exp">${money(c.mt.expP)}</b><span class="muted" style="font-size:.78rem">Previsto ${money(c.mt.exp)}</span></div>
-    <div class="stat clickable" data-act="go" data-v="extrato"><span class="lbl">Balanço ›</span><b class="num ${c.mt.incP - c.mt.expP >= 0 ? 'inc' : 'exp'}">${money(round2(c.mt.incP - c.mt.expP), true)}</b><span class="muted" style="font-size:.78rem">Previsto ${money(round2(c.mt.inc - c.mt.exp), true)}</span></div>
-    <div class="stat clickable" data-act="go" data-v="cartoes"><span class="lbl">Cartões de crédito ›</span><b class="num" style="color:var(--card)">${money(c.mt.cardExp)}</b><span class="muted" style="font-size:.78rem">Faturas a pagar ${money(c.faturasAbertas)}</span></div></div>`, 'lanc'),
+  contas: c => {
+    const id = 'contas'; let list = D().accounts.filter(a => !a.archived && a.showHome !== false && (O(id, 'unsummed') || a.inTotal !== false));
+    const bal = a => accountBalance(a.id, c.isCur ? todayStr() : endOf(c.ym), true);
+    if (O(id, 'onlyBal')) list = list.filter(a => bal(a) !== 0 || accountBalance(a.id, endOf(c.ym), false) !== 0);
+    if (O(id, 'groups')) list = accOrder(list);
+    const tot = round2(list.reduce((s, a) => s + bal(a), 0)), totP = round2(list.reduce((s, a) => s + accountBalance(a.id, endOf(c.ym), false), 0));
+    return panelCard('Contas', list.length ? list.map(a => { const sub = O(id, 'groups') && a.parent; return `<div class="row" ${sub ? 'style="padding-left:22px"' : ''}><div class="grow clickable" data-act="go" data-v="extrato" data-acc="${a.id}" style="display:flex;gap:10px;align-items:center;min-width:0">${accAvatar(a)}<div style="min-width:0"><div class="t">${sub ? '↳ ' : ''}${esc(a.name)}</div><div class="s">${esc(kindOf(a.kind).name)}${a.overdraft ? ' · cheque especial ' + money(a.overdraft) : ''}</div></div></div><div class="v num ${bal(a) < 0 ? 'exp' : ''}">${money(bal(a))}${O(id, 'prev') ? `<small>Previsto ${money(accountBalance(a.id, endOf(c.ym), false))}</small>` : ''}</div>${accRowMenu(a)}</div>`; }).join('') + `<div class="row"><div class="grow"><b>Total</b></div><div class="v num">${money(tot)}${O(id, 'prev') ? `<small>Previsto ${money(totP)}</small>` : ''}</div></div>`
+      : emptyBox('Nenhuma conta para mostrar', 'Cadastre uma conta ou ajuste as opções deste quadro no menu ⋮.', '<button class="btn sm" data-act="accForm">Adicionar conta</button>'), 'contas');
+  },
+  visao: c => {
+    const id = 'visao', mt = monthTotals(c.ym, O(id, 'ign')), prev = O(id, 'prev'), list = O(id, 'view') === 'list';
+    const tile = (lbl, val, cls, sub, attr) => list ? `<div class="row clickable" ${attr}><div class="grow"><div class="t">${lbl}</div>${prev && sub ? `<div class="s">${sub}</div>` : ''}</div><div class="v num ${cls}">${val}</div>${ICO.chev}</div>`
+      : `<div class="stat clickable" ${attr}><span class="lbl">${lbl} ›</span><b class="num ${cls}">${val}</b>${prev && sub ? `<span class="muted" style="font-size:.78rem">${sub}</span>` : ''}</div>`;
+    const t = [];
+    if (O(id, 'bal')) t.push(tile('Saldo nas contas', money(c.atual), '', 'Previsto ' + money(c.prev), 'data-act="go" data-v="contas"'));
+    if (O(id, 'inc')) t.push(tile('Receitas', money(mt.incP), 'inc', 'Previsto ' + money(mt.inc), fAttr({tab: 'income'})));
+    if (O(id, 'exp')) t.push(tile('Despesas', money(mt.expP), 'exp', 'Previsto ' + money(mt.exp), fAttr({tab: 'expense'})));
+    if (O(id, 'trf') === 'balance') t.push(tile('Balanço', money(round2(mt.incP - mt.expP), true), mt.incP - mt.expP >= 0 ? 'inc' : 'exp', 'Previsto ' + money(round2(mt.inc - mt.exp), true), 'data-act="go" data-v="extrato"'));
+    if (O(id, 'trf') === 'transfers') { const tr = round2(monthTx(c.ym).filter(x => x.type === 'transfer').reduce((s, x) => s + x.amount, 0)); t.push(tile('Transferências', money(tr), 'trf', '', fAttr({tab: 'transfer'}))); }
+    if (O(id, 'econ')) { const sv = savingTotals(c.ym); const v = round2(sv.inc - sv.exp); t.push(tile('Economia mensal', money(v, true), v >= 0 ? 'inc' : 'exp', sv.inc ? Math.round(v / sv.inc * 100) + '% das receitas' : '', 'data-act="go" data-v="saude"')); }
+    if (O(id, 'cards')) t.push(tile('Cartões de crédito', money(mt.cardExp), '', 'Faturas a pagar ' + money(c.faturasAbertas), 'data-act="go" data-v="cartoes"'));
+    return panelCard('Visão geral', t.length ? (list ? t.join('') : `<div class="grid2">${t.join('')}</div>`) : '<p class="muted">Escolha os indicadores no menu ⋮.</p>', 'lanc');
+  },
   economia: c => {
-    const sv = savingTotals(c.ym), val = round2(sv.inc - sv.exp), p = sv.inc ? Math.round(val / sv.inc * 100) : (sv.exp ? -100 : 0);
+    const id = 'economia', usePrev = O(id, 'prev'), withIgn = O(id, 'ign');
+    let inc = 0, exp = 0; monthTx(c.ym).forEach(t => { if (t.ign?.saving && !withIgn) return; if (!usePrev && !(t.paid || t.card)) return; if (t.type === 'income') inc += t.amount; if (t.type === 'expense') exp += t.amount; });
+    if (O(id, 'ini')) inc += Math.max(0, c.inicial);
+    inc = round2(inc); exp = round2(exp);
+    const val = round2(inc - exp), p = inc ? Math.round(val / inc * 100) : (exp ? -100 : 0);
     const R = 40, C = Math.PI * R, len = Math.min(1, Math.abs(p) / 100) * C, col = p >= 0 ? 'var(--inc)' : 'var(--exp)';
     return panelCard('Economia mensal', `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
       <div style="text-align:center"><svg viewBox="0 0 100 60" width="130" role="img" aria-label="Economia de ${p}%"><path d="M10 52a40 40 0 0 1 80 0" fill="none" stroke="var(--surface2)" stroke-width="9" stroke-linecap="round"/><path d="M10 52a40 40 0 0 1 80 0" fill="none" stroke="${col}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${len} ${C}"/><text x="50" y="46" text-anchor="middle" font-size="17" font-weight="700" style="fill:var(--fg)">${p}%</text></svg>
         <div class="num ${val >= 0 ? 'inc' : 'exp'}" style="font-weight:700">${money(val, true)}</div><div class="muted" style="font-size:.78rem">${val >= 0 ? 'de economia' : 'sem economia'}</div></div>
       <div class="grow" style="display:flex;flex-direction:column;gap:6px;min-width:150px;flex:1">
-        <div><span class="lbl">Receitas consideradas</span><div class="num inc" style="font-weight:700">${money(round2(sv.inc))}</div></div>
-        <div><span class="lbl">Despesas consideradas</span><div class="num exp" style="font-weight:700">${money(round2(sv.exp))}</div></div>
-        <div class="notice">${val < 0 ? 'Analise as despesas parceladas e variáveis para encontrar cortes e voltar a economizar.' : p < 10 ? 'Você está no azul. Tente guardar pelo menos 10% da renda.' : 'Ótimo ritmo. Que tal mandar a sobra para um objetivo?'}</div></div></div>`, 'saude');
+        <div class="clickable" ${fAttr({tab: 'income'})}><span class="lbl">Receitas consideradas ›</span><div class="num inc" style="font-weight:700">${money(inc)}</div></div>
+        <div class="clickable" ${fAttr({tab: 'expense'})}><span class="lbl">Despesas consideradas ›</span><div class="num exp" style="font-weight:700">${money(exp)}</div></div>
+        ${O(id, 'feedback') ? `<div class="notice">${val < 0 ? 'Analise as despesas parceladas e variáveis para encontrar cortes e voltar a economizar.' : p < 10 ? 'Você está no azul. Tente guardar pelo menos 10% da renda.' : 'Ótimo ritmo. Que tal mandar a sobra para um objetivo?'}</div>` : ''}</div></div>`, 'saude');
   },
-  previsto: c => { const tot = c.mt.inc + c.mt.exp; return panelCard('Previsto do mês', `<div class="donutwrap">${donut([{v: c.mt.inc, c: {name: 'Receitas', color: 'var(--inc)'}, f: fAttr({tab: 'income'})}, {v: c.mt.exp, c: {name: 'Despesas', color: 'var(--exp)'}, f: fAttr({tab: 'expense'})}], tot, 'Balanço', round2(c.mt.inc - c.mt.exp))}
-    ${legendRows([{v: c.mt.inc, c: {name: 'Receitas · ' + pctTxt(c.mt.inc, tot), color: 'var(--inc)'}, f: fAttr({tab: 'income'})}, {v: c.mt.exp, c: {name: 'Despesas · ' + pctTxt(c.mt.exp, tot), color: 'var(--exp)'}, f: fAttr({tab: 'expense'})}])}</div>`, 'lanc'); },
-  cartoes: c => panelCard('Cartões de crédito', D().cards.length ? D().cards.map(cd => { const inv = invoice(cd.id, c.ym); const next = invoice(cd.id, addYm(c.ym, 1)); return `<div class="row clickable" ${fAttr({tab: 'expense', card: cd.id})}>${accAvatar(cd)}<div class="grow"><div class="t">${esc(cd.name)}</div><div class="s">Fecha ${brDate(inv.closeDate).slice(0, 5)} · vence ${brDate(inv.dueDate).slice(0, 5)} · próxima ${money(next.total)}</div></div><div class="v num" style="color:var(--card)">${money(inv.total)}<small>${inv.total && inv.paid >= inv.total ? 'Paga' : inv.closeDate < todayStr() ? 'Fechada' : 'Aberta'}</small></div></div>`; }).join('')
-    : emptyBox('Nenhum cartão', 'Cadastre seus cartões para acompanhar as faturas.', '<button class="btn sm" data-act="cardForm">Adicionar cartão</button>'), 'cartoes', 'Faturas'),
+  previsto: c => { const cons = O('previsto', 'cons'); const inc = cons ? c.mt.incP : c.mt.inc, exp = cons ? c.mt.expP : c.mt.exp, tot = inc + exp;
+    return panelCard(cons ? 'Consolidado do mês' : 'Previsto do mês', `<div class="donutwrap">${donut([{v: inc, c: {name: 'Receitas', color: 'var(--inc)'}, f: fAttr({tab: 'income'})}, {v: exp, c: {name: 'Despesas', color: 'var(--exp)'}, f: fAttr({tab: 'expense'})}], tot, 'Balanço', round2(inc - exp))}
+    ${legendRows([{v: inc, c: {name: 'Receitas · ' + pctTxt(inc, tot), color: 'var(--inc)'}, f: fAttr({tab: 'income'})}, {v: exp, c: {name: 'Despesas · ' + pctTxt(exp, tot), color: 'var(--exp)'}, f: fAttr({tab: 'expense'})}])}</div>`, 'lanc'); },
+  cartoes: c => {
+    const id = 'cartoes'; let list = D().cards.map(cd => ({cd, inv: invoice(cd.id, c.ym), next: invoice(cd.id, addYm(c.ym, 1))}));
+    if (O(id, 'onlyDue')) list = list.filter(x => x.inv.total - x.inv.paid > 0);
+    if (!O(id, 'paid')) list = list.filter(x => !(x.inv.total && x.inv.paid >= x.inv.total));
+    const det = x => [O(id, 'close') ? 'Fecha ' + dow(x.inv.closeDate) + ' ' + brDate(x.inv.closeDate).slice(0, 5) : '', O(id, 'due') ? 'Vence ' + brDate(x.inv.dueDate).slice(0, 5) : '', O(id, 'next') ? 'Próxima ' + money(x.next.total) : ''].filter(Boolean).join(' · ');
+    const totN = round2(list.reduce((s, x) => s + x.next.total, 0)), tot = round2(list.reduce((s, x) => s + x.inv.total, 0));
+    return panelCard('Cartões de crédito', D().cards.length ? (list.map(x => `<div class="row clickable" ${fAttr({tab: 'expense', card: x.cd.id})}>${accAvatar(x.cd)}<div class="grow"><div class="t">${esc(x.cd.name)}</div><div class="s">${det(x)}</div></div><div class="v num" style="color:var(--card)">${money(x.inv.total)}<small>${x.inv.total && x.inv.paid >= x.inv.total ? 'Paga' : x.inv.closeDate < todayStr() ? 'Fechada' : 'Aberta'}</small></div></div>`).join('') || '<p class="muted">Nenhum cartão com essas opções.</p>') + `<div class="row"><div class="grow"><b>Total</b>${O(id, 'next') ? '<div class="s">Próxima</div>' : ''}</div><div class="v num">${money(tot)}${O(id, 'next') ? `<small>${money(totN)}</small>` : ''}</div></div>`
+      : emptyBox('Nenhum cartão', 'Cadastre seus cartões para acompanhar as faturas.', '<button class="btn sm" data-act="cardForm">Adicionar cartão</button>'), 'cartoes');
+  },
   totaisCartoes: c => { if (!D().cards.length) return ''; let lim = 0, used = 0, fat = 0; D().cards.forEach(cd => { const inv = invoice(cd.id, c.ym); lim += cd.limit; used += inv.used; fat += inv.total; }); const free = round2(lim - used);
     return panelCard('Totais dos cartões', `<div class="grid2"><div class="stat"><span class="lbl">Limite total</span><b class="num">${money(lim)}</b></div><div class="stat"><span class="lbl">Faturas a pagar</span><b class="num exp">${money(round2(used))}</b></div><div class="stat"><span class="lbl">Limite disponível</span><b class="num" style="color:var(--trf)">${money(free)}</b></div><div class="stat"><span class="lbl">Fatura de ${MESES[+c.ym.slice(5) - 1]}</span><b class="num">${money(round2(fat))}</b></div></div>
       <div class="bar" style="margin-top:10px;height:10px"><i style="width:${lim ? Math.max(0, free / lim * 100) : 0}%;background:var(--trf)"></i></div><p class="muted" style="font-size:.78rem;margin:4px 0 0">${lim ? Math.round(free / lim * 100) : 0}% do limite livre</p>`, 'cartoes'); },
@@ -655,53 +729,67 @@ const HOME = {
   receitasCat: c => { const cats = byCategory(c.ym, 'income'); const tot = cats.reduce((s, x) => s + x.v, 0); return panelCard('Receitas por categoria', cats.length ? `<div class="donutwrap">${donut(cats, tot, 'Total')}${legendRows(cats.slice(0, 6))}</div>` : emptyBox('Sem receitas', 'Nenhuma receita neste mês.'), fAttr({tab: 'income'})); },
   despesasCat: c => { const cats = byCategory(c.ym, 'expense'); const top = cats.slice(0, 5); const rest = cats.slice(5).reduce((s, x) => s + x.v, 0); if (rest) top.push({v: round2(rest), c: {name: 'Demais categorias', color: '#7d8496'}, f: fAttr({tab: 'expense'})}); const tot = cats.reduce((s, x) => s + x.v, 0);
     return panelCard('Despesas por categoria', cats.length ? `<div class="donutwrap">${donut(top, tot, 'Total')}${legendRows(top)}</div>` : emptyBox('Sem despesas', 'Quando você lançar gastos, eles aparecem aqui.'), fAttr({tab: 'expense'})); },
-  ultimasDesp: () => { const l = store.allTx().filter(t => t.type === 'expense' && t.date <= todayStr()).sort((a, b) => b.date.localeCompare(a.date) || (b.created || 0) - (a.created || 0)).slice(0, 5); return panelCard('Últimas despesas', l.map(txRow).join('') || '<p class="muted">Nenhuma despesa ainda.</p>', fAttr({tab: 'expense'})); },
-  ultimasRec: () => { const l = store.allTx().filter(t => t.type === 'income' && t.date <= todayStr()).sort((a, b) => b.date.localeCompare(a.date) || (b.created || 0) - (a.created || 0)).slice(0, 5); return panelCard('Últimas receitas', l.map(txRow).join('') || '<p class="muted">Nenhuma receita ainda.</p>', fAttr({tab: 'income'})); },
-  discDesp: c => discCard('Situação das despesas', disc(c.ym, 'expense'), 'Total de despesas', 'expense'),
-  discRec: c => discCard('Situação das receitas', disc(c.ym, 'income'), 'Total de receitas', 'income'),
+  ultimasDesp: () => lastCard('ultimasDesp', 'Últimas despesas', 'expense'),
+  ultimasRec: () => lastCard('ultimasRec', 'Últimas receitas', 'income'),
+  discDesp: c => discCard('Situação das despesas', disc(c.ym, 'expense', O('discDesp', 'ign')), 'Total de despesas', 'expense'),
+  discRec: c => discCard('Situação das receitas', disc(c.ym, 'income', O('discRec', 'ign')), 'Total de receitas', 'income'),
   evolDesp: c => evolCard('Evolução das despesas', c.ym, 'expense'),
   evolRec: c => evolCard('Evolução das receitas', c.ym, 'income'),
-  relatorios: c => panelCard('Relatórios salvos', D().reports?.length ? D().reports.map(r => { const tot = reportTotal(r, c.ym); return `<div class="row"><div class="grow clickable" data-act="openReport" data-v="${r.id}"><div class="t">${esc(r.name)}</div><div class="s">${esc(reportDesc(r))}</div></div><div class="v num ${tot >= 0 ? 'inc' : 'exp'} clickable" data-act="openReport" data-v="${r.id}">${money(tot, true)}</div><button class="icon-btn" data-act="delReport" data-v="${r.id}" aria-label="Apagar relatório">${ICO.close}</button></div>`; }).join('')
+  relatorios: c => panelCard('Relatórios salvos', D().reports?.length ? D().reports.map(r => { const tot = reportTotal(r, c.ym, O('relatorios', 'ign')); return `<div class="row"><div class="grow clickable" data-act="openReport" data-v="${r.id}"><div class="t">${esc(r.name)}</div><div class="s">${esc(reportDesc(r))}</div></div><div class="v num ${tot >= 0 ? 'inc' : 'exp'} clickable" data-act="openReport" data-v="${r.id}">${money(tot, true)}</div><button class="icon-btn" data-act="delReport" data-v="${r.id}" aria-label="Apagar relatório">${ICO.close}</button></div>`; }).join('')
     : '<p class="muted" style="margin:0;font-size:.88rem">Em Lançamentos, filtre ou busque e toque em "Salvar como relatório" para acompanhar o total aqui.</p>', 'lanc'),
   recorRec: c => recorCard('Receitas por recorrência', c.ym, 'income'),
   recorDesp: c => recorCard('Despesas por recorrência', c.ym, 'expense'),
-  recXdesp: () => { const td = todayStr(); const days = [6, 5, 4, 3, 2, 1, 0].map(i => shiftDate(td, -i)); const inc = days.map(d => sumRange('income', d, d)), exp = days.map(d => sumRange('expense', d, d)); const ti = round2(inc.reduce((a, b) => a + b, 0)), te = round2(exp.reduce((a, b) => a + b, 0));
-    return panelCard('Receitas x despesas', `<p class="muted" style="margin:-6px 0 6px;font-size:.78rem">Últimos 7 dias</p>${barsChart([inc, exp], ['var(--inc)', 'var(--exp)'], days.map(d => d.slice(8)))}
+  recXdesp: () => { const id = 'recXdesp', o = {withIgn: O(id, 'ign'), onlyVar: O(id, 'onlyVar')}; const td = todayStr(); const days = [6, 5, 4, 3, 2, 1, 0].map(i => shiftDate(td, -i)); const inc = days.map(d => sumBy('income', d, d, o)), exp = days.map(d => sumBy('expense', d, d, o)); const ti = round2(inc.reduce((a, b) => a + b, 0)), te = round2(exp.reduce((a, b) => a + b, 0));
+    return panelCard('Receitas x despesas', `<p class="muted" style="margin:-6px 0 6px;font-size:.78rem">Últimos 7 dias${o.onlyVar ? ' · só variáveis' : ''}</p>${barsChart([inc, exp], ['var(--inc)', 'var(--exp)'], days.map(d => d.slice(8)))}
       <div class="grid2 mini" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="stat"><span class="lbl">Receitas</span><b class="num inc">${money(ti)}</b></div><div class="stat"><span class="lbl">Despesas</span><b class="num exp">${money(te)}</b></div><div class="stat"><span class="lbl">Balanço</span><b class="num ${ti - te >= 0 ? 'inc' : 'exp'}">${money(round2(ti - te), true)}</b></div></div>`, 'lanc'); },
   indicadores: () => indCard('Indicadores econômicos', 'indicadores'),
   cotacoes: () => indCard('Cotações', 'cotacoes'),
-  dadosDesp: () => { const td = todayStr(), y = shiftDate(td, -1), dw = new Date(td + 'T12:00').getDay(), ws = shiftDate(td, -dw), ms = td.slice(0, 8) + '01';
+  dadosDesp: () => { const id = 'dadosDesp', o = {ref: O(id, 'ref'), noFixed: O(id, 'noFixed'), noInst: O(id, 'noInst')}; const sum = (a, b) => sumBy('expense', a, b, o);
+    const td = todayStr(), y = shiftDate(td, -1), dw = new Date(td + 'T12:00').getDay(), ws = shiftDate(td, -dw), ms = td.slice(0, 8) + '01';
     const pm = addYm(ymOf(td), -1), pmEnd = dateIn(pm, +td.slice(8));
-    const rows = [['Hoje, até agora', sumRange('expense', td, td), sumRange('expense', shiftDate(td, -7), shiftDate(td, -7)), 'Mesmo dia da semana passada'],
-      ['Ontem', sumRange('expense', y, y), sumRange('expense', shiftDate(y, -7), shiftDate(y, -7)), 'Mesmo dia da semana passada'],
-      ['Esta semana, até agora', sumRange('expense', ws, td), sumRange('expense', shiftDate(ws, -7), shiftDate(td, -7)), 'Semana passada até o mesmo dia'],
-      ['Este mês, até agora', sumRange('expense', ms, td), sumRange('expense', pm + '-01', pmEnd), 'Mês passado até o mesmo dia']];
-    return panelCard('Dados sobre despesas', rows.map(([l, cur, old, ref]) => `<div class="row clickable" ${fAttr({tab: 'expense'})} style="flex-direction:column;align-items:stretch;gap:2px"><span class="lbl">${l}</span><b class="num" style="font-size:1.3rem;font-family:var(--f-display)">${money(cur)}</b><span class="muted" style="font-size:.8rem">${ref}: ${money(old)}</span><span style="font-size:.82rem">${diffLine(cur, old, true)}</span></div>`).join(''), fAttr({tab: 'expense'})); },
+    const rows = [['Hoje, até agora', sum(td, td), sum(shiftDate(td, -7), shiftDate(td, -7)), 'Mesmo dia da semana passada'],
+      ['Ontem', sum(y, y), sum(shiftDate(y, -7), shiftDate(y, -7)), 'Mesmo dia da semana passada'],
+      ['Esta semana, até agora', sum(ws, td), sum(shiftDate(ws, -7), shiftDate(td, -7)), 'Semana passada até o mesmo dia'],
+      ['Este mês, até agora', sum(ms, td), sum(pm + '-01', pmEnd), 'Mês passado até o mesmo dia']];
+    return panelCard('Dados sobre despesas', `<p class="muted" style="margin:-6px 0 4px;font-size:.78rem">Data de referência: ${{date: 'vencimento', paid: 'efetivação', launch: 'lançamento'}[o.ref]}${o.noFixed ? ' · sem fixas' : ''}${o.noInst ? ' · sem parceladas' : ''}</p>` + rows.map(([l, cur, old, ref]) => `<div class="row clickable" ${fAttr({tab: 'expense'})} style="flex-direction:column;align-items:stretch;gap:2px"><span class="lbl">${l}</span><b class="num" style="font-size:1.3rem;font-family:var(--f-display)">${money(cur)}</b><span class="muted" style="font-size:.8rem">${ref}: ${money(old)}</span><span style="font-size:.82rem">${diffLine(cur, old, true)}</span></div>`).join(''), fAttr({tab: 'expense'})); },
   detOrcDesp: c => detOrcCard('Detalhamento dos orçamentos de despesas', budgetDetail(c.ym, 'expense'), 'expense'),
   detOrcRec: c => detOrcCard('Detalhamento dos orçamentos de receitas', budgetDetail(c.ym, 'income'), 'income'),
-  fluxoOrc: c => { const e = budgetDetail(c.ym, 'income'), s = budgetDetail(c.ym, 'expense'); if (!e.ids.length && !s.ids.length) return ''; const bal = round2(e.prev - s.prev); const max = Math.max(1, e.prev, s.prev, Math.abs(bal));
+  fluxoOrc: c => { const cons = O('fluxoOrc', 'cons'); const e = budgetDetail(c.ym, 'income'), s = budgetDetail(c.ym, 'expense'); if (!e.ids.length && !s.ids.length) return panelCard('Fluxo de caixa dos orçamentos', '<p class="muted" style="margin:0;font-size:.88rem">Defina orçamentos de receitas e despesas em Planejar.</p>', 'planejar');
+    const ev = cons ? e.cons : e.prev, sv = cons ? s.cons : s.prev; const bal = round2(ev - sv); const max = Math.max(1, ev, sv, Math.abs(bal));
     const bar = (lbl, v, color) => `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1"><b class="num" style="font-size:.8rem">${money(v)}</b><div style="width:60%;height:${Math.abs(v) / max * 110}px;min-height:2px;background:${color};border-radius:4px"></div><span class="muted" style="font-size:.78rem">${lbl}</span></div>`;
-    return panelCard('Fluxo de caixa dos orçamentos', `<div style="display:flex;gap:8px;align-items:flex-end;height:150px">${bar('Entradas', e.prev, 'var(--inc)')}${bar('Saídas', s.prev, 'var(--exp)')}${bar('Saldo previsto', bal, 'var(--trf)')}</div><p class="muted" style="font-size:.78rem;margin:6px 0 0">Considera só as categorias com orçamento.</p>`, 'planejar', 'Planejar'); },
+    return panelCard('Fluxo de caixa dos orçamentos', `<div style="display:flex;gap:8px;align-items:flex-end;height:150px">${bar('Entradas', ev, 'var(--inc)')}${bar('Saídas', sv, 'var(--exp)')}${bar(cons ? 'Saldo atual' : 'Saldo previsto', bal, 'var(--trf)')}</div><p class="muted" style="font-size:.78rem;margin:6px 0 0">Considera só as categorias com orçamento${cons ? ', apenas valores efetivados' : ''}.</p>`, 'planejar'); },
   resumoTipo: c => { const k = byKind(c.ym); if (!k.length) return ''; return panelCard('Resumo por tipo de conta', k.map(x => `<div class="row clickable" data-act="go" data-v="contas">${avatar(x.c.name, x.c.color)}<div class="grow"><div class="t">${x.c.name}</div><div class="s">Saldo previsto</div></div><div class="v num ${x.atual < 0 ? 'exp' : ''}">${money(x.atual)}<small>${money(x.prev)}</small></div></div>`).join('') + `<div class="row"><div class="grow"><b>Total</b></div><div class="v num">${money(round2(k.reduce((s, x) => s + x.atual, 0)))}<small>${money(round2(k.reduce((s, x) => s + x.prev, 0)))}</small></div></div>`, 'contas'); },
-  balancoTipo: c => { const k = byKind(c.ym); if (!k.length) return ''; return panelCard('Balanço por tipo de conta', k.map(x => { const d = round2(x.prev - x.ini); const p = x.ini ? Math.round(d / Math.abs(x.ini) * 1000) / 10 : 0; return `<div class="row clickable" data-act="go" data-v="contas">${avatar(x.c.name, x.c.color)}<div class="grow"><div class="t">${x.c.name}</div><div class="s">Inicial ${money(x.ini)} · previsto ${money(x.prev)}</div></div><div class="v num ${d < 0 ? 'exp' : d > 0 ? 'inc' : ''}">${money(d, true)}<small>${String(p).replace('.', ',')}% ${d > 0 ? '▲' : d < 0 ? '▼' : ''}</small></div></div>`; }).join('') + `<div class="row"><div class="grow"><b>Total</b></div><div class="v num">${money(round2(k.reduce((s, x) => s + x.prev - x.ini, 0)), true)}</div></div>`, 'contas'); },
+  balancoTipo: c => { const k = byKind(c.ym); if (!k.length) return ''; const pv = O('balancoTipo', 'prev'); const fin = x => pv ? x.prev : x.atual;
+    return panelCard('Balanço por tipo de conta', k.map(x => { const d = round2(fin(x) - x.ini); const p = x.ini ? Math.round(d / Math.abs(x.ini) * 1000) / 10 : 0; return `<div class="row clickable" data-act="go" data-v="contas">${avatar(x.c.name, x.c.color)}<div class="grow"><div class="t">${x.c.name}</div><div class="s">Inicial ${money(x.ini)} · ${pv ? 'previsto' : 'atual'} ${money(fin(x))}</div></div><div class="v num ${d < 0 ? 'exp' : d > 0 ? 'inc' : ''}">${money(d, true)}<small>${String(p).replace('.', ',')}% ${d > 0 ? '▲' : d < 0 ? '▼' : ''}</small></div></div>`; }).join('') + `<div class="row"><div class="grow"><b>Total</b></div><div class="v num">${money(round2(k.reduce((s, x) => s + fin(x) - x.ini, 0)), true)}</div></div>`, 'contas'); },
   objetivos: () => panelCard('Objetivos', D().goals.length ? D().goals.map(goalMini).join('') : emptyBox('Nenhum objetivo', 'Crie metas como reserva de emergência ou viagem.'), 'data-act="go" data-v="planejar" data-plan="goals"'),
-  orcDesp: c => orcCard('Orçamentos de despesas', c.ym, 'expense'),
-  orcRec: c => orcCard('Orçamentos de receitas', c.ym, 'income'),
+  orcDesp: c => orcCard('Orçamentos de despesas', c.ym, 'expense', 'orcDesp'),
+  orcRec: c => orcCard('Orçamentos de receitas', c.ym, 'income', 'orcRec'),
   debCred: c => { const tot = c.mt.debExp + c.mt.cardExp; return panelCard('Despesas débito x crédito', tot ? `<div class="donutwrap">${donut([{v: c.mt.debExp, c: {name: 'Débito', color: 'var(--exp)'}, f: fAttr({tab: 'expense', pay: 'debit'})}, {v: c.mt.cardExp, c: {name: 'Crédito', color: 'var(--card)'}, f: fAttr({tab: 'expense', pay: 'credit'})}], tot, 'Total')}${legendRows([{v: c.mt.debExp, c: {name: 'Débito · ' + pctTxt(c.mt.debExp, tot), color: 'var(--exp)'}, f: fAttr({tab: 'expense', pay: 'debit'})}, {v: c.mt.cardExp, c: {name: 'Crédito · ' + pctTxt(c.mt.cardExp, tot), color: 'var(--card)'}, f: fAttr({tab: 'expense', pay: 'credit'})}])}</div>` : emptyBox('Sem despesas', 'Nada lançado neste mês.'), fAttr({tab: 'expense'})); },
-  rankDesp: c => { const cats = byCategory(c.ym, 'expense').slice(0, 6); return panelCard('Ranking de categorias de despesas', cats.length ? hbars(cats) : '<p class="muted">Sem despesas neste mês.</p>', 'graficos', 'Gráficos'); },
-  rankRec: c => { const cats = byCategory(c.ym, 'income').slice(0, 6); return panelCard('Ranking de categorias de receitas', cats.length ? hbars(cats) : '<p class="muted">Sem receitas neste mês.</p>', 'graficos', 'Gráficos'); },
-  rankContas: c => { const l = c.accs.map(a => ({v: accountBalance(a.id, c.isCur ? todayStr() : endOf(c.ym), true), c: {name: a.name, color: a.color}, f: `data-act="go" data-v="extrato" data-acc="${a.id}"`})).sort((a, b) => b.v - a.v); return l.length ? panelCard('Ranking de contas', hbars(l, true), 'contas') : ''; },
-  saldoGlobal: c => { const all = D().accounts.filter(a => !a.archived); const at = round2(all.reduce((s, a) => s + accountBalance(a.id, c.isCur ? todayStr() : endOf(c.ym), true), 0)), pv = round2(all.reduce((s, a) => s + accountBalance(a.id, endOf(c.ym), false), 0));
-    return panelCard('Saldo global', `<div class="row"><div class="av" style="background:#13a37a">R$</div><div class="grow"><div class="t">Real (BRL)</div><div class="s">Todas as contas, inclusive as fora do saldo geral</div></div><div class="v num">${money(at)}<small>Previsto ${money(pv)}</small></div></div>`, 'contas'); },
+  rankDesp: c => rankCard('rankDesp', 'Ranking de categorias de despesas', c.ym, 'expense'),
+  rankRec: c => rankCard('rankRec', 'Ranking de categorias de receitas', c.ym, 'income'),
+  rankContas: c => { const l = c.accs.map(a => ({v: accountBalance(a.id, c.isCur ? todayStr() : endOf(c.ym), true), c: {name: a.name, color: a.color}, f: `data-act="go" data-v="extrato" data-acc="${a.id}"`})).sort((a, b) => b.v - a.v); return l.length ? panelCard('Ranking de contas', hbars(l, true, O('rankContas', 'pct')), 'contas') : ''; },
+  saldoGlobal: c => { const id = 'saldoGlobal'; let all = D().accounts.filter(a => !a.archived && (O(id, 'unsummed') || a.inTotal !== false)); const b = a => accountBalance(a.id, c.isCur ? todayStr() : endOf(c.ym), true);
+    if (O(id, 'onlyBal')) all = all.filter(a => b(a) !== 0);
+    const at = round2(all.reduce((s, a) => s + b(a), 0)), pv = round2(all.reduce((s, a) => s + accountBalance(a.id, endOf(c.ym), false), 0));
+    return panelCard('Saldo global', `<div class="row"><div class="av" style="background:#13a37a">R$</div><div class="grow"><div class="t">Real (BRL)</div><div class="s">${all.length} conta(s)${O(id, 'unsummed') ? ', inclusive as fora do saldo geral' : ''}</div></div><div class="v num">${money(at)}<small>Previsto ${money(pv)}</small></div></div><div class="row"><div class="grow"><b>Total na moeda base</b></div><div class="v num">${money(at)}<small>Previsto ${money(pv)}</small></div></div>`, 'contas'); },
   saude: c => { const h = health(c.ym); const weak = [...h.parts].sort((a, b) => a.s / a.max - b.s / b.max)[0]; const bad = h.parts.filter(p => p.s / p.max < .5).length;
     return `<section class="panel"><div class="ph"><h2 class="clickable" data-act="go" data-v="saude">Saúde financeira</h2>${cardTools('Saúde financeira', 'data-act="go" data-v="saude"', 'saude')}</div>
       <div class="gauge">${gauge(h.score)}<div class="grow"><b>${h.score >= 70 ? 'Saúde boa' : h.score >= 45 ? 'Atenção' : 'Precisa melhorar'}</b><div class="muted" style="font-size:.85rem">${bad ? `${bad} de ${h.parts.length} dimensões precisam melhorar` : 'Todas as dimensões estão bem'}</div></div></div>
       ${radar(h.parts)}
       <div class="notice"><span class="lbl">Destaque</span><div><b>${weak.k} · ${Math.round(weak.s / weak.max * 100)}/100.</b> ${weak.hint}</div></div>
       <button class="btn ghost sm" style="margin-top:10px" data-act="askClaude" data-v="Analise minha saúde financeira deste mês e me dê 3 ações práticas para melhorar a nota.">Pedir um plano ao Claude</button></section>`; },
-  notif: () => { const ib = D().inbox; return ib.length ? panelCard('Transações do banco para revisar', ib.slice(0, 4).map(it => `<div class="row" style="flex-wrap:wrap"><div class="grow"><div class="t">${esc(it.desc)}</div><div class="s">${brDate(it.date)} · ${esc(it.target ? targetName(it.target) : 'Escolha a conta')}</div></div><div class="v num ${it.type === 'income' ? 'inc' : 'exp'}">${money(it.type === 'income' ? it.amount : -it.amount)}</div><div class="btnrow" style="width:100%"><button class="btn sm" data-act="inboxOk" data-v="${it.id}">Importar</button><button class="btn ghost sm" data-act="inboxDel" data-v="${it.id}">Remover</button></div></div>`).join(''), 'sync', ib.length > 4 ? `Ver todas (${ib.length})` : 'Abrir') : ''; },
+  notif: () => { const ib = D().inbox; return ib.length ? panelCard('Transações do banco para revisar', ib.slice(0, 4).map(it => `<div class="row" style="flex-wrap:wrap"><div class="grow"><div class="t">${esc(it.desc)}</div><div class="s">${brDate(it.date)} · ${esc(it.target ? targetName(it.target) : 'Escolha a conta')}</div></div><div class="v num ${it.type === 'income' ? 'inc' : 'exp'}">${money(it.type === 'income' ? it.amount : -it.amount)}</div><div class="btnrow" style="width:100%"><button class="btn sm" data-act="inboxOk" data-v="${it.id}">Importar</button><button class="btn ghost sm" data-act="inboxDel" data-v="${it.id}">Remover</button></div></div>`).join(''), 'sync') : ''; },
   emprestimos: () => { const open = D().loans.filter(l => l.amount - l.paid > 0); return panelCard('Empréstimos', open.length ? open.map(l => `<div class="row clickable" data-act="loanForm" data-v="${l.id}">${avatar(l.person, l.dir === 'lent' ? '#13a37a' : '#d24b6a')}<div class="grow"><div class="t">${esc(l.person)}</div><div class="s">${l.dir === 'lent' ? 'Você emprestou' : 'Você deve'}${l.due ? ' · até ' + brDate(l.due) : ''}</div></div><div class="v num ${l.dir === 'lent' ? 'inc' : 'exp'}">${money(round2(l.amount - l.paid))}</div></div>`).join('') : emptyBox('Nada aqui', 'Nenhum empréstimo em aberto.'), 'emprestimos'); }
 };
+function lastCard(id, title, type) {
+  const l = store.allTx().filter(t => t.type === type && t.date <= todayStr()).sort((a, b) => b.date.localeCompare(a.date) || (b.created || 0) - (a.created || 0)).slice(0, +O(id, 'n'));
+  return panelCard(title, l.map(t => txRow(t) + (O(id, 'note') && t.note ? `<div class="muted" style="font-size:.8rem;margin:-6px 0 6px 40px">${esc(t.note)}</div>` : '')).join('') || `<p class="muted">Nenhuma ${type === 'expense' ? 'despesa' : 'receita'} ainda.</p>`, fAttr({tab: type}));
+}
+function rankCard(id, title, ym, type) {
+  const items = catTotals(ym, type, {ref: O(id, 'ref'), sub: O(id, 'sub')}); const all = items.reduce((s, x) => s + x.v, 0); const top = items.slice(0, +O(id, 'top')); const ts = top.reduce((s, x) => s + x.v, 0);
+  if (!top.length) return panelCard(title, `<p class="muted">Sem ${type === 'expense' ? 'despesas' : 'receitas'} neste mês.</p>`, 'graficos');
+  return panelCard(title, hbars(top, false, O(id, 'pct')) + `<p class="muted" style="font-size:.8rem;margin:4px 0 0">Essas ${top.length} categorias somam <b>${money(round2(ts))}</b>, ${pctTxt(ts, all)} do total de ${money(round2(all))}. Toque numa delas para ver os detalhes.</p>`, 'graficos');
+}
 function discCard(title, r, totalLbl, type) {
   const tot = round2(r.ok + r.soon + r.late + r.far);
   const row = (lbl, v, color, st) => `<div class="row clickable" ${fAttr({tab: type, st})}><div class="av" style="background:${color};font-size:.72rem">${pctTxt(v, tot)}</div><div class="grow"><div class="t">${lbl}</div></div><div class="v num">${money(round2(v))}</div>${ICO.chev}</div>`;
@@ -731,14 +819,17 @@ function detOrcCard(title, d, type) {
     <tr><td>${type === 'expense' ? 'Despesas' : 'Receitas'}</td><td class="num" style="text-align:right">${money(d.cons)}</td><td class="num" style="text-align:right">${money(d.prev)}</td></tr>
     <tr><td>${type === 'expense' ? 'Saldo disponível' : 'Falta receber'}</td><td class="num ${d.meta - d.cons < 0 ? 'exp' : ''}" style="text-align:right">${money(round2(d.meta - d.cons))}</td><td class="num ${d.meta - d.prev < 0 ? 'exp' : ''}" style="text-align:right">${money(round2(d.meta - d.prev))}</td></tr></tbody></table></div>`, 'planejar', 'Planejar');
 }
-function orcCard(title, ym, type) {
-  const byC = Object.fromEntries(byCategory(ym, type, 'budget').map(x => [x.id, x.v]));
+function orcCard(title, ym, type, id) {
+  const usePrev = O(id, 'prev'); const byC = {};
+  monthTx(ym).forEach(t => { if (t.type !== type || t.ign?.budget) return; if (!usePrev && !(t.paid || t.card)) return; byC[t.cat] = (byC[t.cat] || 0) + t.amount; });
   const buds = D().cats.filter(c => c.type === type && D().budgets[c.id] > 0);
-  if (!buds.length) return panelCard(title, `<p class="muted" style="margin:0;font-size:.88rem">Nenhum orçamento de ${type === 'expense' ? 'despesa' : 'receita'} definido.</p>`, 'planejar', 'Planejar');
+  if (!buds.length) return panelCard(title, `<p class="muted" style="margin:0;font-size:.88rem">Nenhum orçamento de ${type === 'expense' ? 'despesa' : 'receita'} definido.</p>`, 'planejar');
+  const isCur = ym === ymOf(todayStr()), dayFrac = isCur ? +todayStr().slice(8) / daysIn(ym) : null;
   let tl = 0, tg = 0;
-  const rows = buds.map(c => { const lim = D().budgets[c.id], g = byC[c.id] || 0, p = g / lim; tl += lim; tg += g; const color = type === 'income' ? 'var(--inc)' : p > 1 ? 'var(--exp)' : p > .8 ? 'var(--warn)' : 'var(--inc)';
-    return `<div style="margin-bottom:10px" class="clickable" ${fAttr({tab: type, cat: c.id})}><div style="display:flex;justify-content:space-between;gap:8px;font-size:.88rem"><span>${esc(c.name)} ›</span><span class="num">${money(g)} de ${money(lim)}</span></div><div class="bar"><i style="width:${Math.min(100, p * 100)}%;background:${color}"></i></div></div>`; }).join('');
-  return panelCard(title, rows + `<div style="display:flex;justify-content:space-between;font-weight:700;margin-top:4px"><span>Total</span><span class="num">${money(round2(tg))} de ${money(round2(tl))} · ${pctTxt(tg, tl)}</span></div>`, 'planejar', 'Planejar');
+  const bar = (p, color) => `<div class="bar" style="position:relative"><i style="width:${Math.min(100, p * 100)}%;background:${color}"></i>${O(id, 'today') && dayFrac !== null ? `<span title="Hoje" style="position:absolute;top:-3px;bottom:-3px;left:${dayFrac * 100}%;width:2px;background:var(--fg)"></span>` : ''}</div>`;
+  const rows = buds.map(c => { const lim = D().budgets[c.id], g = round2(byC[c.id] || 0), p = g / lim; tl += lim; tg += g; const color = type === 'income' ? 'var(--inc)' : p > 1 ? 'var(--exp)' : p > .8 ? 'var(--warn)' : 'var(--inc)';
+    return `<div style="margin-bottom:10px" class="clickable" ${fAttr({tab: type, cat: c.id})}><div style="display:flex;justify-content:space-between;gap:8px;font-size:.88rem"><span>${esc(c.name)} ›</span><span class="num">${money(g)} de ${money(lim)}</span></div>${bar(p, color)}${O(id, 'bal') ? `<div class="muted num" style="font-size:.75rem;text-align:right">${type === 'expense' ? 'Saldo' : 'Falta'} ${money(round2(lim - g))} · ${pctTxt(g, lim)}</div>` : ''}</div>`; }).join('');
+  return panelCard(title, rows + (O(id, 'total') ? `<div style="display:flex;justify-content:space-between;font-weight:700;margin-top:4px"><span>Total</span><span class="num">${money(round2(tg))} de ${money(round2(tl))} · ${pctTxt(tg, tl)}</span></div>` : '') + (O(id, 'today') && dayFrac !== null ? `<p class="muted" style="font-size:.75rem;margin:4px 0 0">A linha vertical marca o dia de hoje (${Math.round(dayFrac * 100)}% do mês).</p>` : ''), 'planejar');
 }
 function indCard(title, key) {
   const src = ui.marketData?.[key]?.length ? {items: ui.marketData[key], at: ui.marketData.atualizado, auto: true} : (D().market?.[key]?.length ? {items: D().market[key], at: D().market.atualizado} : null);
@@ -751,11 +842,15 @@ function cardMenu(id) {
   const cfg = homeCfg(), i = cfg.findIndex(h => h.id === id);
   const opener = document.querySelector(`[data-act="cardMenu"][data-v="${id}"]`)?.previousElementSibling;
   const item = (act, label, sub) => `<div class="row clickable" data-m="${act}"><div class="grow"><div class="t">${label}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>${ICO.chev}</div>`;
-  sheet(`${sheetHead(HOME_NAME[id])}<div class="menu-list">
+  const opts = (CARD_OPTS[id] || []).map(o => o.ch ? `<div class="field" style="padding:6px 0"><span>${o.l}</span><div class="seg">${o.ch.map(([v, l]) => `<button type="button" data-opt="${o.k}" data-val="${v}" class="${String(O(id, o.k)) === String(v) ? 'on' : ''}">${l}</button>`).join('')}</div></div>`
+    : `<label class="check"><span><b style="font-weight:600">${o.l}</b></span><input type="checkbox" class="switch" data-opt="${o.k}" ${O(id, o.k) ? 'checked' : ''}></label>`).join('');
+  sheet(`${sheetHead(HOME_NAME[id])}${opts ? `<div>${opts}</div>` : ''}${CARD_HELP[id] ? `<details><summary class="clickable" style="font-weight:600">${id === 'contas' ? 'Problemas com o saldo' : 'Ajuda'}</summary><p class="muted" style="font-size:.88rem">${CARD_HELP[id]}</p></details>` : ''}<div class="menu-list">
     ${opener?.dataset.act ? item('open', 'Abrir', 'Ver os detalhes deste quadro') : ''}
     ${i > 0 ? item('up', 'Mover para cima') : ''}${i < cfg.length - 1 ? item('down', 'Mover para baixo') : ''}
     ${item('hide', 'Ocultar da tela inicial', 'Você pode mostrar de novo em Configurar resumo')}
     ${item('config', 'Configurar resumo', 'Escolher e ordenar todos os quadros')}</div>`, (el, close) => el.addEventListener('click', e => {
+    const ob = e.target.closest('[data-opt]');
+    if (ob) { const o = CARD_OPTS[id].find(x => x.k === ob.dataset.opt); const val = o.ch ? (typeof o.d === 'number' ? +ob.dataset.val : ob.dataset.val) : ob.checked; setO(id, o.k, val); if (o.ch) el.querySelectorAll(`[data-opt="${o.k}"]`).forEach(b => b.classList.toggle('on', b === ob)); render(); return; }
     const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return; close();
     if (m === 'open') opener.click();
     else if (m === 'up' || m === 'down') { const j = i + (m === 'up' ? -1 : 1); [cfg[i], cfg[j]] = [cfg[j], cfg[i]]; store.saveData(); render(); document.querySelector(`[data-act="cardMenu"][data-v="${id}"]`)?.closest('section')?.scrollIntoView({block: 'center'}); }
@@ -763,6 +858,61 @@ function cardMenu(id) {
     else go('resumo');
   }));
 }
+function accMenu(id) {
+  const a = acc(id);
+  const item = (m, label, sub) => `<div class="row clickable" data-m="${m}"><div class="grow"><div class="t">${label}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>${ICO.chev}</div>`;
+  sheet(`<div class="hd"><div style="display:flex;gap:10px;align-items:center">${accAvatar(a)}<h2>${esc(a.name)}</h2></div><button class="icon-btn" data-close aria-label="Fechar">${ICO.close}</button></div>
+    <div class="menu-list">${item('edit', 'Editar')}${item('extrato', 'Extrato', 'Saldo dia a dia')}${item('new', 'Novo lançamento nesta conta')}${item('adjust', 'Reajustar saldo', 'Corrigir quando o saldo não bate com o banco')}${item('tx', 'Transações', 'Lançamentos do mês desta conta')}${item('archive', a.archived ? 'Desarquivar' : 'Excluir ou arquivar')}</div>
+    <label class="check"><span><b style="font-weight:600">Exibir na tela de resumo</b></span><input type="checkbox" class="switch" id="amHome" ${a.showHome !== false ? 'checked' : ''}></label>`, (el, close) => {
+    el.querySelector('#amHome').onchange = e => { a.showHome = e.target.checked; store.saveData(); render(); };
+    el.addEventListener('click', e => { const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return; close();
+      if (m === 'edit') accForm(id);
+      else if (m === 'extrato') go('extrato', {acc: id});
+      else if (m === 'new') txForm(null, {account: id, date: ui.ym === ymOf(todayStr()) ? todayStr() : ui.ym + '-01'});
+      else if (m === 'adjust') adjustBalance(id);
+      else if (m === 'tx') go('lanc', {lancTab: 'all', search: '', f: {acc: id}});
+      else if (m === 'archive') { if (a.archived) { a.archived = false; store.saveData(); render(); toast('Conta desarquivada.'); } else if (store.allTx().some(t => t.account === id || t.to === id)) confirmSheet('Arquivar conta', 'Esta conta tem lançamentos, então ela será arquivada: some das listas, mas o histórico fica guardado.', 'Arquivar', () => { a.archived = true; store.saveData(); render(); toast('Conta arquivada.'); }); else confirmSheet('Excluir conta', 'A conta não tem lançamentos e será excluída.', 'Excluir', () => { D().accounts = D().accounts.filter(x => x.id !== id); store.saveData(); render(); toast('Conta excluída.'); }); }
+    });
+  });
+}
+function adjustBalance(id) {
+  const a = acc(id), cur = accountBalance(id, todayStr(), true);
+  sheet(`${sheetHead('Reajustar saldo')}<p class="muted" style="margin:0;font-size:.88rem">Saldo de ${esc(a.name)} no app hoje: <b class="num">${money(cur)}</b>. Digite o saldo que aparece no banco. O app cria um ajuste com a diferença, que não entra em gráficos, orçamentos, economia nem nos totais do mês.</p>
+    <form id="adjf" style="display:flex;flex-direction:column;gap:10px"><div class="field"><span>Saldo correto (R$)</span><input id="adjV" inputmode="decimal" required placeholder="0,00"></div><button class="btn">Reajustar</button></form>`, (el, close) => el.querySelector('#adjf').onsubmit = e => {
+    e.preventDefault(); const target = evalAmount(el.querySelector('#adjV').value); const diff = round2(target - cur); if (!diff) { close(); toast('O saldo já está correto.'); return; }
+    const type = diff > 0 ? 'income' : 'expense'; const other = D().cats.find(c => c.type === type && c.name === 'Outros') || D().cats.find(c => c.type === type);
+    store.addTx({id: uid(), type, desc: 'Ajuste de saldo', amount: Math.abs(diff), date: todayStr(), account: id, cat: other?.id, paid: true, tags: [], ign: {stats: true, budget: true, saving: true, totals: true}, created: Date.now()});
+    store.saveData(); close(); render(); toast(`Saldo ajustado em ${money(diff, true)}.`);
+  });
+}
+VIEWS.catDetail = () => {
+  const c = cat(ui.catId), ym = ui.ym, isCur = ym === ymOf(todayStr()), type = c.type || 'expense';
+  const tx = store.allTx().filter(t => t.cat === ui.catId && t.type === type && !t.ign?.stats);
+  const inMonth = tx.filter(t => ymOf(t.date) === ym), done = inMonth.filter(t => t.paid || t.card), pend = inMonth.filter(t => !(t.paid || t.card));
+  const sum = l => round2(l.reduce((s, t) => s + t.amount, 0));
+  const realized = sum(done), pending = sum(pend), year = sum(tx.filter(t => t.date.slice(0, 4) === ym.slice(0, 4) && (t.paid || t.card)));
+  const days = isCur ? +todayStr().slice(8) : daysIn(ym), avg = round2(realized / days), proj = round2(avg * daysIn(ym));
+  const biggest = [...done].sort((a, b) => b.amount - a.amount)[0];
+  const months = [-5, -4, -3, -2, -1, 0].map(i => addYm(ym, i)), vals = months.map(m => sum(tx.filter(t => ymOf(t.date) === m && (t.paid || t.card)))), six = round2(vals.reduce((a, b) => a + b, 0));
+  const daily = Array(daysIn(ym)).fill(0); done.forEach(t => daily[+t.date.slice(8) - 1] += t.amount); let acc2 = 0; const cum = daily.map(v => acc2 += v);
+  const word = type === 'expense' ? 'despesa' : 'receita';
+  const stat = (lbl, val, sub) => `<div class="row" style="flex-direction:column;align-items:stretch;gap:2px"><span class="lbl">${lbl}</span><b class="num" style="font-size:1.15rem;font-family:var(--f-display)">${val}</b><span class="muted" style="font-size:.8rem">${sub}</span></div>`;
+  return `<section class="panel" style="display:flex;align-items:center;gap:12px">${avatar(c.name, c.color)}<h2 style="font-size:1.2rem;flex:1">${esc(c.name)}</h2><button class="btn ghost sm" ${fAttr({tab: type, cat: ui.catId})}>Ver lançamentos</button></section>
+  <section class="panel">
+    ${stat('Total realizado no mês', money(realized), 'Valor efetivado nesta categoria no mês, sem pendências.')}
+    ${stat('Valores pendentes no mês', money(pending), 'Ainda não realizados. Não entram nas médias nem na projeção.')}
+    ${stat('Total realizado no ano', money(year), `Valores efetivados de janeiro a dezembro de ${ym.slice(0, 4)}.`)}
+    ${stat('Média diária realizada', money(avg), `Total realizado dividido pelos ${days} dias ${isCur ? 'decorridos do mês, incluindo hoje' : 'do mês'}.`)}
+    ${stat('Projeção até o fim do mês', money(proj), 'Estimativa pela média diária realizada. Não inclui pendências.')}
+    ${stat(`Maior ${word} do mês`, biggest ? `${esc(biggest.desc)} · ${money(biggest.amount)}` : `Nenhuma ${word} realizada`, biggest ? brDate(biggest.date) : 'Não há lançamentos efetivados nesta categoria no mês.')}
+    ${D().budgets[ui.catId] ? stat('Orçamento do mês', `${money(realized + pending)} de ${money(D().budgets[ui.catId])}`, pctTxt(realized + pending, D().budgets[ui.catId]) + ' usado, contando pendentes.') : `<button class="btn ghost sm" style="margin-top:8px" data-act="budgetForm" data-v="${ui.catId}">Definir orçamento para esta categoria</button>`}
+  </section>
+  <section class="panel"><div class="ph"><h2>Evolução diária</h2><span class="muted" style="font-size:.78rem">acumulado no mês</span></div>${lineChart(cum, c.color, 5)}</section>
+  <section class="panel"><div class="ph"><h2>Evolução mensal</h2></div>
+    <div class="grid2"><div class="stat"><span class="lbl">Últimos seis meses</span><b class="num">${money(six)}</b></div><div class="stat"><span class="lbl">Média mensal realizada</span><b class="num">${money(round2(six / 6))}</b></div></div>
+    ${multiLine([vals], [c.color], months.map(m => MES3[+m.slice(5) - 1]))}
+    <p class="muted" style="font-size:.78rem;margin:4px 0 0">Média dos seis meses do gráfico, incluindo o mês selecionado e meses sem lançamentos.</p></section>`;
+};
 function marketEdit(key) {
   const cur = (D().market?.[key] || []).map(x => [x.nome, x.valor, x.variacao].join('; ')).join('\n');
   const ex = key === 'cotacoes' ? 'Dólar; R$ 5,44; +1,05%\nEuro; R$ 6,08; +1,12%' : 'Selic; 15,00% a.a.; 0,00 p.p.\nIPCA; 0,26% no mês; -0,22 p.p.';
@@ -771,8 +921,8 @@ function marketEdit(key) {
     (el, close) => el.querySelector('#mkf').onsubmit = e => { e.preventDefault(); D().market ||= {}; D().market[key] = el.querySelector('#mkT').value.split('\n').map(l => l.split(';').map(x => x.trim())).filter(p => p[0]).map(([nome, valor = '', variacao = '']) => ({nome, valor, variacao})); D().market.atualizado = new Date().toISOString(); store.saveData(); close(); render(); });
 }
 const reportDesc = r => [{all: 'Todos', expense: 'Despesas', income: 'Receitas', transfer: 'Transferências', pend: 'Pendentes'}[r.tab] || 'Todos', ...Object.entries(r.f || {}).filter(([, v]) => v).map(([k, v]) => fLabel(k, v)), r.search ? `"${r.search}"` : ''].filter(Boolean).join(' · ');
-function reportTotal(r, ym) {
-  let l = monthTx(ym);
+function reportTotal(r, ym, withIgn) {
+  let l = monthTx(ym).filter(t => withIgn || !t.ign?.totals);
   if (r.tab === 'pend') l = l.filter(t => statusOf(t) !== 'ok'); else if (r.tab === 'transfer') l = l.filter(t => t.type === 'transfer' || t.type === 'cardpay'); else if (r.tab && r.tab !== 'all') l = l.filter(t => t.type === r.tab);
   if (r.search) { const q = norm(r.search); l = l.filter(t => norm(t.desc + ' ' + cat(t.cat).name + ' ' + subName(t) + ' ' + (t.tags || []).join(' ')).includes(q)); }
   const F = r.f || {}; if (F.cat) l = l.filter(t => t.cat === F.cat); if (F.card) l = l.filter(t => t.card === F.card); if (F.st) l = l.filter(t => stKey(t) === F.st); if (F.rec) l = l.filter(t => (t.inst ? 'parcelada' : t.fixed ? 'fixa' : 'variavel') === F.rec); if (F.pay) l = l.filter(t => F.pay === 'credit' ? !!t.card : t.type === 'expense' && !t.card);
@@ -803,7 +953,7 @@ VIEWS.busca = () => {
 };
 
 const stKey = t => { const st = statusOf(t); return st === 'ok' ? 'ok' : st === 'late' ? 'late' : t.date <= shiftDate(todayStr(), 7) ? 'soon' : 'far'; };
-const fLabel = (k, v) => k === 'cat' ? cat(v).name : k === 'card' ? 'Cartão ' + (card(v)?.name || '') : k === 'st' ? {ok: 'Efetivadas', soon: 'Vencem em até 7 dias', late: 'Vencidas', far: 'Vencem depois'}[v] : k === 'rec' ? {fixa: 'Fixas', parcelada: 'Parceladas', variavel: 'Variáveis'}[v] : k === 'pay' ? (v === 'credit' ? 'No crédito' : 'No débito') : v;
+const fLabel = (k, v) => k === 'acc' ? 'Conta ' + (acc(v)?.name || '') : k === 'cat' ? cat(v).name : k === 'card' ? 'Cartão ' + (card(v)?.name || '') : k === 'st' ? {ok: 'Efetivadas', soon: 'Vencem em até 7 dias', late: 'Vencidas', far: 'Vencem depois'}[v] : k === 'rec' ? {fixa: 'Fixas', parcelada: 'Parceladas', variavel: 'Variáveis'}[v] : k === 'pay' ? (v === 'credit' ? 'No crédito' : 'No débito') : v;
 VIEWS.lanc = () => {
   const tabs = [['all', 'Todos'], ['expense', 'Despesas'], ['income', 'Receitas'], ['transfer', 'Transferências'], ['pend', 'Pendentes']];
   let list = monthTx(ui.ym).slice();
@@ -814,6 +964,7 @@ VIEWS.lanc = () => {
   const F = ui.f || {};
   if (F.cat) list = list.filter(t => t.cat === F.cat);
   if (F.card) list = list.filter(t => t.card === F.card);
+  if (F.acc) list = list.filter(t => (t.account === F.acc && !t.card) || t.to === F.acc);
   if (F.st) list = list.filter(t => stKey(t) === F.st);
   if (F.rec) list = list.filter(t => (t.inst ? 'parcelada' : t.fixed ? 'fixa' : 'variavel') === F.rec);
   if (F.pay) list = list.filter(t => F.pay === 'credit' ? !!t.card : t.type === 'expense' && !t.card);
@@ -868,7 +1019,7 @@ VIEWS.cartoes = () => {
 VIEWS.contas = () => {
   const list = accOrder(D().accounts);
   return `<section class="panel">${list.length ? list.map(a => { const bal = accountBalance(a.id, todayStr(), true); const tags = [kindOf(a.kind).name, a.isDefault ? 'padrão' : '', a.invest ? 'investimentos' : '', a.inTotal === false ? 'fora dos totais' : '', a.showHome === false ? 'oculta no resumo' : '', a.number ? 'nº ' + a.number : ''].filter(Boolean).join(' · ');
-    return `<div class="row clickable" data-act="accForm" data-v="${a.id}" ${a.parent ? 'style="padding-left:22px"' : ''}>${accAvatar(a)}<div class="grow"><div class="t">${a.parent ? '↳ ' : ''}${esc(a.name)}${a.archived ? ' (arquivada)' : ''}</div><div class="s">${esc(tags)}</div></div><div class="v num ${bal < 0 ? 'exp' : ''}">${money(bal)}${a.overdraft ? `<small>Disponível ${money(round2(bal + a.overdraft))}</small>` : ''}</div></div>`; }).join('') : emptyBox('Nenhuma conta', 'Adicione sua primeira conta.')}</section>
+    return `<div class="row clickable" data-act="accForm" data-v="${a.id}" ${a.parent ? 'style="padding-left:22px"' : ''}>${accAvatar(a)}<div class="grow"><div class="t">${a.parent ? '↳ ' : ''}${esc(a.name)}${a.archived ? ' (arquivada)' : ''}</div><div class="s">${esc(tags)}</div></div><div class="v num ${bal < 0 ? 'exp' : ''}">${money(bal)}${a.overdraft ? `<small>Disponível ${money(round2(bal + a.overdraft))}</small>` : ''}</div>${accRowMenu(a)}</div>`; }).join('') : emptyBox('Nenhuma conta', 'Adicione sua primeira conta.')}</section>
   <div class="btnrow"><button class="btn" data-act="accForm">Adicionar conta</button><button class="btn ghost" data-act="accKinds">Categorias de conta</button></div>`;
 };
 
@@ -1098,7 +1249,7 @@ function txForm(t, preset = {}) {
     type: t.type === 'cardpay' ? 'transfer' : (t.type || preset.type || 'expense'),
     amountStr: fmtInput(t.adj ? t.amount - (t.adj.kind === 'fee' ? t.adj.v : -t.adj.v) : t.amount), adjKind: t.adj?.kind || 'fee', adjStr: fmtInput(t.adj?.v), launch: t.launch || nowLocal(), desc: t.desc || '', rep: 'no', times: 2, instMode: 'total', freq: 'm', fixedMonths: 12,
     multi: false, splits: [], date: t.date || preset.date || todayStr(), paid: t.paid ?? true, paidDate: t.paidDate || '',
-    cat: t.cat || null, sub: t.sub || '', src: t.card ? 'c:' + t.card : 'a:' + (t.account || firstAcc), from: t.account || firstAcc, to: t.to || D().accounts[1]?.id || firstAcc,
+    cat: t.cat || null, sub: t.sub || '', src: t.card ? 'c:' + t.card : 'a:' + (t.account || preset.account || firstAcc), from: t.account || firstAcc, to: t.to || D().accounts[1]?.id || firstAcc,
     tagsStr: (t.tags || []).join(', '), note: t.note || '', att: structuredClone(t.att || []), goal: t.goal || '', noAuto: !!t.noAuto, ign: {...(t.ign || {})},
     cont: false, more: !!(t.note || t.adj || t.att?.length || t.goal || t.noAuto || Object.values(t.ign || {}).some(Boolean)), applyAll: false
   };
@@ -1681,7 +1832,7 @@ document.addEventListener('click', e => {
     go: () => { if (el.dataset.plan) ui.planTab = el.dataset.plan; if (el.dataset.chart) ui.chartTab = el.dataset.chart; const fresh = v === 'lanc' && ui.view !== 'lanc'; go(v, {acc: el.dataset.acc || ui.acc, lancTab: el.dataset.tab || (fresh ? 'all' : ui.lancTab), search: fresh ? '' : ui.search, f: fresh ? {} : ui.f}); },
     filter: () => { const d = el.dataset; go('lanc', {lancTab: d.ftab || 'all', search: '', f: {cat: d.fcat, card: d.fcard, st: d.fst, rec: d.frec, pay: d.fpay}}); },
     clearF: () => { if (v === '*') { ui.f = {}; ui.search = ''; } else delete ui.f[v]; render(); },
-    cardMenu: () => cardMenu(v),
+    cardMenu: () => cardMenu(v), accMenu: () => accMenu(v), catDetail: () => go('catDetail', {catId: v}),
     month: () => { ui.ym = addYm(ui.ym, +v); render(); },
     hide: () => { S().hide = !S().hide; store.saveData(); render(); },
     new: () => txForm(null, {date: el.dataset.date || (ui.ym === ymOf(todayStr()) ? todayStr() : ui.ym + '-01')}),
