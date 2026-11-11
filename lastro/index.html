@@ -40,6 +40,8 @@ header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;backgroun
 .icon-btn{width:40px;height:40px;border-radius:12px;border:0;background:transparent;display:grid;place-items:center;cursor:pointer;color:var(--fg)}
 .icon-btn:hover{background:var(--surface2)}
 .icon-btn svg{width:22px;height:22px}
+.icon-btn.tool{width:34px;height:34px;color:var(--muted)}.icon-btn.tool svg{width:18px;height:18px}
+.legend .clickable:hover,.clickable:hover{opacity:.85}
 .monthnav{display:flex;align-items:center;justify-content:center;gap:4px;margin-top:4px}
 .monthnav span{min-width:150px;text-align:center;font-weight:700}
 main{flex:1;padding:6px max(16px,env(safe-area-inset-right,0px)) 110px max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:14px}
@@ -201,6 +203,8 @@ const ICO = {
   eyeoff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3.2 3.9M6.6 6.6A17 17 0 0 0 2 12s4 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/></svg>',
   close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 6l-6 6 6 6"/></svg>',
+  open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+  dots: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>',
   chev: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>'
 };
 
@@ -363,8 +367,9 @@ function invoice(cid, ym) {
 function byCategory(ym, type, flag = 'stats') {
   const m = {};
   for (const t of monthTx(ym)) if (t.type === type && !t.ign?.[flag]) m[t.cat] = (m[t.cat] || 0) + t.amount;
-  return Object.entries(m).map(([id, v]) => ({id, v: round2(v), c: cat(id)})).sort((a, b) => b.v - a.v);
+  return Object.entries(m).map(([id, v]) => ({id, v: round2(v), c: cat(id), f: fAttr({tab: type, cat: id})})).sort((a, b) => b.v - a.v);
 }
+const fAttr = o => 'data-act="filter" ' + Object.entries(o).map(([k, v]) => `data-f${k}="${esc(v)}"`).join(' ');
 function savingTotals(ym) {
   let inc = 0, exp = 0;
   for (const t of monthTx(ym)) { if (t.ign?.saving) continue; if (t.type === 'income') inc += t.amount; if (t.type === 'expense') exp += t.amount; }
@@ -399,7 +404,7 @@ function health(ym) {
 /* ============ gráficos (SVG) ============ */
 function donut(items, total, label, center = total) {
   const R = 52, C = 2 * Math.PI * R; let off = 0;
-  const segs = total > 0 ? items.map(it => { const len = it.v / total * C; const s = `<circle r="${R}" cx="70" cy="70" fill="none" stroke="${it.c.color}" stroke-width="20" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 70 70)"/>`; off += len; return s; }).join('') : `<circle r="${R}" cx="70" cy="70" fill="none" stroke="var(--surface2)" stroke-width="20"/>`;
+  const segs = total > 0 ? items.map(it => { const len = it.v / total * C; const s = `<circle r="${R}" cx="70" cy="70" fill="none" stroke="${it.c.color}" stroke-width="20" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 70 70)" ${it.f ? it.f + ' style="cursor:pointer"' : ''}><title>${esc(it.c.name || '')}</title></circle>`; off += len; return s; }).join('') : `<circle r="${R}" cx="70" cy="70" fill="none" stroke="var(--surface2)" stroke-width="20"/>`;
   return `<svg viewBox="0 0 140 140" width="140" height="140" role="img" aria-label="${esc(label)}">${segs}
     <text x="70" y="66" text-anchor="middle" font-size="10">${esc(label)}</text>
     <text x="70" y="82" text-anchor="middle" font-size="12" font-weight="700" style="fill:var(--fg)">${S().hide ? '•••' : BRL.format(center).replace('R$ ', 'R$ ')}</text></svg>`;
@@ -481,13 +486,16 @@ function homeCfg() {
 }
 const KIND = {checking: 'Conta corrente', savings: 'Poupança', wallet: 'Carteira', invest: 'Investimentos', other: 'Outros'};
 const KIND_COLOR = {checking: '#3a9ad9', savings: '#13a37a', wallet: '#e2b23a', invest: '#5d6fe0', other: '#7d8496'};
-const goalMini = g => { const p = g.target ? g.saved / g.target : 0; return `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:.88rem"><span>${esc(g.name)}</span><span class="num">${money(g.saved)} / ${money(g.target)}</span></div><div class="bar"><i style="width:${Math.min(100, p * 100)}%;background:var(--inc)"></i></div></div>`; };
-const panelCard = (title, body, link, linkLabel = 'Ver') => `<section class="panel"><div class="ph"><h2>${title}</h2>${link ? `<button class="btn ghost sm" data-act="go" data-v="${link}">${linkLabel}</button>` : ''}</div>${body}</section>`;
-const legendRows = items => `<div class="legend">${items.map(x => `<div><i style="background:${x.c.color}"></i><span>${esc(x.c.name)}</span><b class="num">${money(x.v)}</b></div>`).join('')}</div>`;
+const goalMini = g => { const p = g.target ? g.saved / g.target : 0; return `<div style="margin-bottom:10px" class="clickable" data-act="go" data-v="planejar" data-plan="goals"><div style="display:flex;justify-content:space-between;gap:8px;font-size:.88rem"><span>${esc(g.name)}</span><span class="num">${money(g.saved)} / ${money(g.target)}</span></div><div class="bar"><i style="width:${Math.min(100, p * 100)}%;background:var(--inc)"></i></div></div>`; };
+let curCard = null;
+const linkAttr = link => !link ? '' : link.startsWith('data-') ? link : `data-act="go" data-v="${link}"`;
+const cardTools = (title, la, id) => `<div style="display:flex;gap:2px;flex:none">${la ? `<button class="icon-btn tool" ${la} aria-label="Abrir ${esc(title)}" title="Abrir">${ICO.open}</button>` : ''}${id ? `<button class="icon-btn tool" data-act="cardMenu" data-v="${id}" aria-label="Opções do quadro ${esc(title)}" title="Opções">${ICO.dots}</button>` : ''}</div>`;
+const panelCard = (title, body, link) => { const la = linkAttr(link); return `<section class="panel"><div class="ph"><h2 ${la ? `class="clickable" ${la}` : ''}>${title}</h2>${cardTools(title, la, curCard)}</div>${body}</section>`; };
+const legendRows = items => `<div class="legend">${items.map(x => `<div ${x.f ? `class="clickable" ${x.f}` : ''}><i style="background:${x.c.color}"></i><span>${esc(x.c.name)}</span><b class="num">${money(x.v)}</b>${x.f ? '<span class="muted" aria-hidden="true">›</span>' : ''}</div>`).join('')}</div>`;
 const pctTxt = (v, t) => t ? Math.round(v / t * 100) + '%' : '0%';
 function hbars(items, signed) {
   const max = Math.max(1, ...items.map(x => Math.abs(x.v))); const tot = items.reduce((s, x) => s + Math.abs(x.v), 0);
-  return items.map(x => `<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:.88rem"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.c.name)}</span><span class="num ${signed && x.v < 0 ? 'exp' : ''}">${money(x.v)} · ${pctTxt(Math.abs(x.v), tot)}</span></div><div class="bar"><i style="width:${Math.abs(x.v) / max * 100}%;background:${signed && x.v < 0 ? 'var(--exp)' : x.c.color}"></i></div></div>`).join('');
+  return items.map(x => `<div style="margin-bottom:9px" ${x.f ? `class="clickable" ${x.f}` : ''}><div style="display:flex;justify-content:space-between;gap:8px;font-size:.88rem"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.c.name)}</span><span class="num ${signed && x.v < 0 ? 'exp' : ''}">${money(x.v)} · ${pctTxt(Math.abs(x.v), tot)}</span></div><div class="bar"><i style="width:${Math.abs(x.v) / max * 100}%;background:${signed && x.v < 0 ? 'var(--exp)' : x.c.color}"></i></div></div>`).join('');
 }
 function multiLine(series, colors, labels) {
   const W = 320, H = 150, pb = 22, pl = 8;
@@ -547,25 +555,25 @@ const HOME = {
     const entC = round2(td.ok), entP = round2(td.ok + td.soon + td.late + td.far), saiC = round2(dd.ok), saiP = round2(dd.ok + dd.soon + dd.late + dd.far);
     const balC = round2(c.inicial + entC - saiC), balP = round2(c.inicial + entP - saiP);
     const max = Math.max(1, c.inicial + entP, saiP, Math.abs(balP), Math.abs(balC)); const h = v => Math.max(0, v) / max * 120;
-    const col = (lbl, parts, total) => `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;min-width:0"><b class="num" style="font-size:.78rem">${money(total)}</b><div style="width:70%;display:flex;flex-direction:column-reverse;height:124px;justify-content:flex-start">${parts.map(([v, color, op]) => `<div style="height:${h(v)}px;background:${color};opacity:${op || 1};border-radius:4px;margin-top:2px"></div>`).join('')}</div><span class="muted" style="font-size:.78rem">${lbl}</span></div>`;
+    const col = (lbl, parts, total, f) => `<div class="clickable" ${f} style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;min-width:0"><b class="num" style="font-size:.78rem">${money(total)}</b><div style="width:70%;display:flex;flex-direction:column-reverse;height:124px;justify-content:flex-start">${parts.map(([v, color, op]) => `<div style="height:${h(v)}px;background:${color};opacity:${op || 1};border-radius:4px;margin-top:2px"></div>`).join('')}</div><span class="muted" style="font-size:.78rem">${lbl}</span></div>`;
     return panelCard('Fluxo de caixa', `<div style="display:flex;gap:8px;align-items:flex-end">
-      ${col('Entradas', [[c.inicial, 'var(--muted)', .5], [entC, 'var(--inc)'], [entP - entC, 'var(--inc)', .4]], c.inicial + entP)}
-      ${col('Saídas', [[saiC, 'var(--exp)'], [saiP - saiC, 'var(--exp)', .4]], saiP)}
-      ${col('Balanço', [[balC, 'var(--trf)'], [balP - balC, 'var(--trf)', .4]], balP)}</div>
+      ${col('Entradas', [[c.inicial, 'var(--muted)', .5], [entC, 'var(--inc)'], [entP - entC, 'var(--inc)', .4]], c.inicial + entP, fAttr({tab: 'income'}))}
+      ${col('Saídas', [[saiC, 'var(--exp)'], [saiP - saiC, 'var(--exp)', .4]], saiP, fAttr({tab: 'expense'}))}
+      ${col('Balanço', [[balC, 'var(--trf)'], [balP - balC, 'var(--trf)', .4]], balP, 'data-act="go" data-v="extrato"')}</div>
       <div class="tablewrap" style="margin-top:10px"><table><thead><tr><th></th><th style="text-align:right">Consolidado</th><th style="text-align:right">Previsto</th></tr></thead><tbody>
       <tr><td>Saldo inicial</td><td class="num" style="text-align:right" colspan="2">${money(c.inicial)}</td></tr>
       <tr><td class="inc">Entradas</td><td class="num" style="text-align:right">${money(entC)}</td><td class="num" style="text-align:right">${money(entP)}</td></tr>
       <tr><td class="exp">Saídas</td><td class="num" style="text-align:right">${money(saiC)}</td><td class="num" style="text-align:right">${money(saiP)}</td></tr>
       <tr><td class="trf">Balanço</td><td class="num" style="text-align:right">${money(balC)}</td><td class="num" style="text-align:right">${money(balP)}</td></tr></tbody></table></div>
-      <p class="muted" style="font-size:.78rem;margin:6px 0 0">A parte mais clara de cada barra é o que ainda está pendente.</p>`);
+      <p class="muted" style="font-size:.78rem;margin:6px 0 0">A parte mais clara de cada barra é o que ainda está pendente.</p>`, 'lanc');
   },
   contas: c => panelCard('Contas', c.accs.length ? c.accs.map(a => `<div class="row clickable" data-act="go" data-v="extrato" data-acc="${a.id}">${avatar(a.name, a.color)}<div class="grow"><div class="t">${esc(a.name)}</div><div class="s">${KIND[a.kind] || 'Conta'}</div></div><div class="v num">${money(accountBalance(a.id, c.isCur ? todayStr() : endOf(c.ym), true))}<small>Previsto ${money(accountBalance(a.id, endOf(c.ym), false))}</small></div></div>`).join('') + `<div class="row"><div class="grow"><b>Total</b></div><div class="v num">${money(c.atual)}<small>Previsto ${money(c.prev)}</small></div></div>`
     : emptyBox('Nenhuma conta ainda', 'Cadastre sua conta corrente, carteira ou poupança.', '<button class="btn sm" data-act="accForm">Adicionar conta</button>'), 'contas', 'Gerenciar'),
   visao: c => panelCard('Visão geral', `<div class="grid2">
-    <div class="stat"><span class="lbl">Receitas</span><b class="num inc">${money(c.mt.incP)}</b><span class="muted" style="font-size:.78rem">Previsto ${money(c.mt.inc)}</span></div>
-    <div class="stat"><span class="lbl">Despesas</span><b class="num exp">${money(c.mt.expP)}</b><span class="muted" style="font-size:.78rem">Previsto ${money(c.mt.exp)}</span></div>
-    <div class="stat"><span class="lbl">Balanço</span><b class="num ${c.mt.incP - c.mt.expP >= 0 ? 'inc' : 'exp'}">${money(round2(c.mt.incP - c.mt.expP), true)}</b><span class="muted" style="font-size:.78rem">Previsto ${money(round2(c.mt.inc - c.mt.exp), true)}</span></div>
-    <div class="stat"><span class="lbl">Cartões de crédito</span><b class="num" style="color:var(--card)">${money(c.mt.cardExp)}</b><span class="muted" style="font-size:.78rem">Faturas a pagar ${money(c.faturasAbertas)}</span></div></div>`),
+    <div class="stat clickable" ${fAttr({tab: 'income'})}><span class="lbl">Receitas ›</span><b class="num inc">${money(c.mt.incP)}</b><span class="muted" style="font-size:.78rem">Previsto ${money(c.mt.inc)}</span></div>
+    <div class="stat clickable" ${fAttr({tab: 'expense'})}><span class="lbl">Despesas ›</span><b class="num exp">${money(c.mt.expP)}</b><span class="muted" style="font-size:.78rem">Previsto ${money(c.mt.exp)}</span></div>
+    <div class="stat clickable" data-act="go" data-v="extrato"><span class="lbl">Balanço ›</span><b class="num ${c.mt.incP - c.mt.expP >= 0 ? 'inc' : 'exp'}">${money(round2(c.mt.incP - c.mt.expP), true)}</b><span class="muted" style="font-size:.78rem">Previsto ${money(round2(c.mt.inc - c.mt.exp), true)}</span></div>
+    <div class="stat clickable" data-act="go" data-v="cartoes"><span class="lbl">Cartões de crédito ›</span><b class="num" style="color:var(--card)">${money(c.mt.cardExp)}</b><span class="muted" style="font-size:.78rem">Faturas a pagar ${money(c.faturasAbertas)}</span></div></div>`, 'lanc'),
   economia: c => {
     const sv = savingTotals(c.ym), val = round2(sv.inc - sv.exp), p = sv.inc ? Math.round(val / sv.inc * 100) : (sv.exp ? -100 : 0);
     const R = 40, C = Math.PI * R, len = Math.min(1, Math.abs(p) / 100) * C, col = p >= 0 ? 'var(--inc)' : 'var(--exp)';
@@ -575,33 +583,33 @@ const HOME = {
       <div class="grow" style="display:flex;flex-direction:column;gap:6px;min-width:150px;flex:1">
         <div><span class="lbl">Receitas consideradas</span><div class="num inc" style="font-weight:700">${money(round2(sv.inc))}</div></div>
         <div><span class="lbl">Despesas consideradas</span><div class="num exp" style="font-weight:700">${money(round2(sv.exp))}</div></div>
-        <div class="notice">${val < 0 ? 'Analise as despesas parceladas e variáveis para encontrar cortes e voltar a economizar.' : p < 10 ? 'Você está no azul. Tente guardar pelo menos 10% da renda.' : 'Ótimo ritmo. Que tal mandar a sobra para um objetivo?'}</div></div></div>`);
+        <div class="notice">${val < 0 ? 'Analise as despesas parceladas e variáveis para encontrar cortes e voltar a economizar.' : p < 10 ? 'Você está no azul. Tente guardar pelo menos 10% da renda.' : 'Ótimo ritmo. Que tal mandar a sobra para um objetivo?'}</div></div></div>`, 'saude');
   },
-  previsto: c => { const tot = c.mt.inc + c.mt.exp; return panelCard('Previsto do mês', `<div class="donutwrap">${donut([{v: c.mt.inc, c: {color: 'var(--inc)'}}, {v: c.mt.exp, c: {color: 'var(--exp)'}}], tot, 'Balanço', round2(c.mt.inc - c.mt.exp))}
-    <div class="legend"><div><i style="background:var(--inc)"></i><span>Receitas · ${pctTxt(c.mt.inc, tot)}</span><b class="num">${money(c.mt.inc)}</b></div><div><i style="background:var(--exp)"></i><span>Despesas · ${pctTxt(c.mt.exp, tot)}</span><b class="num">${money(c.mt.exp)}</b></div></div></div>`); },
-  cartoes: c => panelCard('Cartões de crédito', D().cards.length ? D().cards.map(cd => { const inv = invoice(cd.id, c.ym); const next = invoice(cd.id, addYm(c.ym, 1)); return `<div class="row clickable" data-act="go" data-v="cartoes">${avatar(cd.name, cd.color)}<div class="grow"><div class="t">${esc(cd.name)}</div><div class="s">Fecha ${brDate(inv.closeDate).slice(0, 5)} · vence ${brDate(inv.dueDate).slice(0, 5)} · próxima ${money(next.total)}</div></div><div class="v num" style="color:var(--card)">${money(inv.total)}<small>${inv.total && inv.paid >= inv.total ? 'Paga' : inv.closeDate < todayStr() ? 'Fechada' : 'Aberta'}</small></div></div>`; }).join('')
+  previsto: c => { const tot = c.mt.inc + c.mt.exp; return panelCard('Previsto do mês', `<div class="donutwrap">${donut([{v: c.mt.inc, c: {name: 'Receitas', color: 'var(--inc)'}, f: fAttr({tab: 'income'})}, {v: c.mt.exp, c: {name: 'Despesas', color: 'var(--exp)'}, f: fAttr({tab: 'expense'})}], tot, 'Balanço', round2(c.mt.inc - c.mt.exp))}
+    ${legendRows([{v: c.mt.inc, c: {name: 'Receitas · ' + pctTxt(c.mt.inc, tot), color: 'var(--inc)'}, f: fAttr({tab: 'income'})}, {v: c.mt.exp, c: {name: 'Despesas · ' + pctTxt(c.mt.exp, tot), color: 'var(--exp)'}, f: fAttr({tab: 'expense'})}])}</div>`, 'lanc'); },
+  cartoes: c => panelCard('Cartões de crédito', D().cards.length ? D().cards.map(cd => { const inv = invoice(cd.id, c.ym); const next = invoice(cd.id, addYm(c.ym, 1)); return `<div class="row clickable" ${fAttr({tab: 'expense', card: cd.id})}>${avatar(cd.name, cd.color)}<div class="grow"><div class="t">${esc(cd.name)}</div><div class="s">Fecha ${brDate(inv.closeDate).slice(0, 5)} · vence ${brDate(inv.dueDate).slice(0, 5)} · próxima ${money(next.total)}</div></div><div class="v num" style="color:var(--card)">${money(inv.total)}<small>${inv.total && inv.paid >= inv.total ? 'Paga' : inv.closeDate < todayStr() ? 'Fechada' : 'Aberta'}</small></div></div>`; }).join('')
     : emptyBox('Nenhum cartão', 'Cadastre seus cartões para acompanhar as faturas.', '<button class="btn sm" data-act="cardForm">Adicionar cartão</button>'), 'cartoes', 'Faturas'),
   totaisCartoes: c => { if (!D().cards.length) return ''; let lim = 0, used = 0, fat = 0; D().cards.forEach(cd => { const inv = invoice(cd.id, c.ym); lim += cd.limit; used += inv.used; fat += inv.total; }); const free = round2(lim - used);
     return panelCard('Totais dos cartões', `<div class="grid2"><div class="stat"><span class="lbl">Limite total</span><b class="num">${money(lim)}</b></div><div class="stat"><span class="lbl">Faturas a pagar</span><b class="num exp">${money(round2(used))}</b></div><div class="stat"><span class="lbl">Limite disponível</span><b class="num" style="color:var(--trf)">${money(free)}</b></div><div class="stat"><span class="lbl">Fatura de ${MESES[+c.ym.slice(5) - 1]}</span><b class="num">${money(round2(fat))}</b></div></div>
       <div class="bar" style="margin-top:10px;height:10px"><i style="width:${lim ? Math.max(0, free / lim * 100) : 0}%;background:var(--trf)"></i></div><p class="muted" style="font-size:.78rem;margin:4px 0 0">${lim ? Math.round(free / lim * 100) : 0}% do limite livre</p>`, 'cartoes'); },
-  contasTipo: c => { const k = byKind(c.ym); if (!k.length) return ''; const pos = k.map(x => ({v: Math.max(0, x.atual), c: x.c})); const tot = round2(k.reduce((s, x) => s + x.atual, 0));
-    return panelCard('Contas por tipo', `<div class="donutwrap">${donut(pos, tot, 'Total')}<div class="legend">${k.map(x => `<div><i style="background:${x.c.color}"></i><span>${x.c.name}</span><b class="num ${x.atual < 0 ? 'exp' : ''}">${money(x.atual)}</b></div>`).join('')}</div></div>`, 'contas'); },
-  receitasCat: c => { const cats = byCategory(c.ym, 'income'); const tot = cats.reduce((s, x) => s + x.v, 0); return panelCard('Receitas por categoria', cats.length ? `<div class="donutwrap">${donut(cats, tot, 'Total')}${legendRows(cats.slice(0, 6))}</div>` : emptyBox('Sem receitas', 'Nenhuma receita neste mês.'), 'graficos', 'Gráficos'); },
-  despesasCat: c => { const cats = byCategory(c.ym, 'expense'); const top = cats.slice(0, 5); const rest = cats.slice(5).reduce((s, x) => s + x.v, 0); if (rest) top.push({v: round2(rest), c: {name: 'Demais categorias', color: '#7d8496'}}); const tot = cats.reduce((s, x) => s + x.v, 0);
-    return panelCard('Despesas por categoria', cats.length ? `<div class="donutwrap">${donut(top, tot, 'Total')}${legendRows(top)}</div>` : emptyBox('Sem despesas', 'Quando você lançar gastos, eles aparecem aqui.'), 'graficos', 'Gráficos'); },
-  ultimasDesp: () => { const l = store.allTx().filter(t => t.type === 'expense' && t.date <= todayStr()).sort((a, b) => b.date.localeCompare(a.date) || (b.created || 0) - (a.created || 0)).slice(0, 5); return panelCard('Últimas despesas', l.map(txRow).join('') || '<p class="muted">Nenhuma despesa ainda.</p>'); },
-  ultimasRec: () => { const l = store.allTx().filter(t => t.type === 'income' && t.date <= todayStr()).sort((a, b) => b.date.localeCompare(a.date) || (b.created || 0) - (a.created || 0)).slice(0, 5); return panelCard('Últimas receitas', l.map(txRow).join('') || '<p class="muted">Nenhuma receita ainda.</p>'); },
-  discDesp: c => discCard('Situação das despesas', disc(c.ym, 'expense'), 'Total de despesas'),
-  discRec: c => discCard('Situação das receitas', disc(c.ym, 'income'), 'Total de receitas'),
+  contasTipo: c => { const k = byKind(c.ym); if (!k.length) return ''; const pos = k.map(x => ({v: Math.max(0, x.atual), c: x.c, f: `data-act="go" data-v="contas"`})); const tot = round2(k.reduce((s, x) => s + x.atual, 0));
+    return panelCard('Contas por tipo', `<div class="donutwrap">${donut(pos, tot, 'Total')}<div class="legend">${k.map(x => `<div class="clickable" data-act="go" data-v="contas"><i style="background:${x.c.color}"></i><span>${x.c.name}</span><b class="num ${x.atual < 0 ? 'exp' : ''}">${money(x.atual)}</b></div>`).join('')}</div></div>`, 'contas'); },
+  receitasCat: c => { const cats = byCategory(c.ym, 'income'); const tot = cats.reduce((s, x) => s + x.v, 0); return panelCard('Receitas por categoria', cats.length ? `<div class="donutwrap">${donut(cats, tot, 'Total')}${legendRows(cats.slice(0, 6))}</div>` : emptyBox('Sem receitas', 'Nenhuma receita neste mês.'), fAttr({tab: 'income'})); },
+  despesasCat: c => { const cats = byCategory(c.ym, 'expense'); const top = cats.slice(0, 5); const rest = cats.slice(5).reduce((s, x) => s + x.v, 0); if (rest) top.push({v: round2(rest), c: {name: 'Demais categorias', color: '#7d8496'}, f: fAttr({tab: 'expense'})}); const tot = cats.reduce((s, x) => s + x.v, 0);
+    return panelCard('Despesas por categoria', cats.length ? `<div class="donutwrap">${donut(top, tot, 'Total')}${legendRows(top)}</div>` : emptyBox('Sem despesas', 'Quando você lançar gastos, eles aparecem aqui.'), fAttr({tab: 'expense'})); },
+  ultimasDesp: () => { const l = store.allTx().filter(t => t.type === 'expense' && t.date <= todayStr()).sort((a, b) => b.date.localeCompare(a.date) || (b.created || 0) - (a.created || 0)).slice(0, 5); return panelCard('Últimas despesas', l.map(txRow).join('') || '<p class="muted">Nenhuma despesa ainda.</p>', fAttr({tab: 'expense'})); },
+  ultimasRec: () => { const l = store.allTx().filter(t => t.type === 'income' && t.date <= todayStr()).sort((a, b) => b.date.localeCompare(a.date) || (b.created || 0) - (a.created || 0)).slice(0, 5); return panelCard('Últimas receitas', l.map(txRow).join('') || '<p class="muted">Nenhuma receita ainda.</p>', fAttr({tab: 'income'})); },
+  discDesp: c => discCard('Situação das despesas', disc(c.ym, 'expense'), 'Total de despesas', 'expense'),
+  discRec: c => discCard('Situação das receitas', disc(c.ym, 'income'), 'Total de receitas', 'income'),
   evolDesp: c => evolCard('Evolução das despesas', c.ym, 'expense'),
   evolRec: c => evolCard('Evolução das receitas', c.ym, 'income'),
   relatorios: c => panelCard('Relatórios salvos', D().reports?.length ? D().reports.map(r => { const tot = reportTotal(r, c.ym); return `<div class="row"><div class="grow clickable" data-act="openReport" data-v="${r.id}"><div class="t">${esc(r.name)}</div><div class="s">${esc(reportDesc(r))}</div></div><div class="v num ${tot >= 0 ? 'inc' : 'exp'} clickable" data-act="openReport" data-v="${r.id}">${money(tot, true)}</div><button class="icon-btn" data-act="delReport" data-v="${r.id}" aria-label="Apagar relatório">${ICO.close}</button></div>`; }).join('')
-    : '<p class="muted" style="margin:0;font-size:.88rem">Em Lançamentos, filtre ou busque e toque em "Salvar como relatório" para acompanhar o total aqui.</p>'),
+    : '<p class="muted" style="margin:0;font-size:.88rem">Em Lançamentos, filtre ou busque e toque em "Salvar como relatório" para acompanhar o total aqui.</p>', 'lanc'),
   recorRec: c => recorCard('Receitas por recorrência', c.ym, 'income'),
   recorDesp: c => recorCard('Despesas por recorrência', c.ym, 'expense'),
   recXdesp: () => { const td = todayStr(); const days = [6, 5, 4, 3, 2, 1, 0].map(i => shiftDate(td, -i)); const inc = days.map(d => sumRange('income', d, d)), exp = days.map(d => sumRange('expense', d, d)); const ti = round2(inc.reduce((a, b) => a + b, 0)), te = round2(exp.reduce((a, b) => a + b, 0));
     return panelCard('Receitas x despesas', `<p class="muted" style="margin:-6px 0 6px;font-size:.78rem">Últimos 7 dias</p>${barsChart([inc, exp], ['var(--inc)', 'var(--exp)'], days.map(d => d.slice(8)))}
-      <div class="grid2 mini" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="stat"><span class="lbl">Receitas</span><b class="num inc">${money(ti)}</b></div><div class="stat"><span class="lbl">Despesas</span><b class="num exp">${money(te)}</b></div><div class="stat"><span class="lbl">Balanço</span><b class="num ${ti - te >= 0 ? 'inc' : 'exp'}">${money(round2(ti - te), true)}</b></div></div>`); },
+      <div class="grid2 mini" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="stat"><span class="lbl">Receitas</span><b class="num inc">${money(ti)}</b></div><div class="stat"><span class="lbl">Despesas</span><b class="num exp">${money(te)}</b></div><div class="stat"><span class="lbl">Balanço</span><b class="num ${ti - te >= 0 ? 'inc' : 'exp'}">${money(round2(ti - te), true)}</b></div></div>`, 'lanc'); },
   indicadores: () => indCard('Indicadores econômicos', 'indicadores'),
   cotacoes: () => indCard('Cotações', 'cotacoes'),
   dadosDesp: () => { const td = todayStr(), y = shiftDate(td, -1), dw = new Date(td + 'T12:00').getDay(), ws = shiftDate(td, -dw), ms = td.slice(0, 8) + '01';
@@ -610,25 +618,25 @@ const HOME = {
       ['Ontem', sumRange('expense', y, y), sumRange('expense', shiftDate(y, -7), shiftDate(y, -7)), 'Mesmo dia da semana passada'],
       ['Esta semana, até agora', sumRange('expense', ws, td), sumRange('expense', shiftDate(ws, -7), shiftDate(td, -7)), 'Semana passada até o mesmo dia'],
       ['Este mês, até agora', sumRange('expense', ms, td), sumRange('expense', pm + '-01', pmEnd), 'Mês passado até o mesmo dia']];
-    return panelCard('Dados sobre despesas', rows.map(([l, cur, old, ref]) => `<div class="row" style="flex-direction:column;align-items:stretch;gap:2px"><span class="lbl">${l}</span><b class="num" style="font-size:1.3rem;font-family:var(--f-display)">${money(cur)}</b><span class="muted" style="font-size:.8rem">${ref}: ${money(old)}</span><span style="font-size:.82rem">${diffLine(cur, old, true)}</span></div>`).join('')); },
+    return panelCard('Dados sobre despesas', rows.map(([l, cur, old, ref]) => `<div class="row clickable" ${fAttr({tab: 'expense'})} style="flex-direction:column;align-items:stretch;gap:2px"><span class="lbl">${l}</span><b class="num" style="font-size:1.3rem;font-family:var(--f-display)">${money(cur)}</b><span class="muted" style="font-size:.8rem">${ref}: ${money(old)}</span><span style="font-size:.82rem">${diffLine(cur, old, true)}</span></div>`).join(''), fAttr({tab: 'expense'})); },
   detOrcDesp: c => detOrcCard('Detalhamento dos orçamentos de despesas', budgetDetail(c.ym, 'expense'), 'expense'),
   detOrcRec: c => detOrcCard('Detalhamento dos orçamentos de receitas', budgetDetail(c.ym, 'income'), 'income'),
   fluxoOrc: c => { const e = budgetDetail(c.ym, 'income'), s = budgetDetail(c.ym, 'expense'); if (!e.ids.length && !s.ids.length) return ''; const bal = round2(e.prev - s.prev); const max = Math.max(1, e.prev, s.prev, Math.abs(bal));
     const bar = (lbl, v, color) => `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1"><b class="num" style="font-size:.8rem">${money(v)}</b><div style="width:60%;height:${Math.abs(v) / max * 110}px;min-height:2px;background:${color};border-radius:4px"></div><span class="muted" style="font-size:.78rem">${lbl}</span></div>`;
     return panelCard('Fluxo de caixa dos orçamentos', `<div style="display:flex;gap:8px;align-items:flex-end;height:150px">${bar('Entradas', e.prev, 'var(--inc)')}${bar('Saídas', s.prev, 'var(--exp)')}${bar('Saldo previsto', bal, 'var(--trf)')}</div><p class="muted" style="font-size:.78rem;margin:6px 0 0">Considera só as categorias com orçamento.</p>`, 'planejar', 'Planejar'); },
-  resumoTipo: c => { const k = byKind(c.ym); if (!k.length) return ''; return panelCard('Resumo por tipo de conta', k.map(x => `<div class="row">${avatar(x.c.name, x.c.color)}<div class="grow"><div class="t">${x.c.name}</div><div class="s">Saldo previsto</div></div><div class="v num ${x.atual < 0 ? 'exp' : ''}">${money(x.atual)}<small>${money(x.prev)}</small></div></div>`).join('') + `<div class="row"><div class="grow"><b>Total</b></div><div class="v num">${money(round2(k.reduce((s, x) => s + x.atual, 0)))}<small>${money(round2(k.reduce((s, x) => s + x.prev, 0)))}</small></div></div>`, 'contas'); },
-  balancoTipo: c => { const k = byKind(c.ym); if (!k.length) return ''; return panelCard('Balanço por tipo de conta', k.map(x => { const d = round2(x.prev - x.ini); const p = x.ini ? Math.round(d / Math.abs(x.ini) * 1000) / 10 : 0; return `<div class="row">${avatar(x.c.name, x.c.color)}<div class="grow"><div class="t">${x.c.name}</div><div class="s">Inicial ${money(x.ini)} · previsto ${money(x.prev)}</div></div><div class="v num ${d < 0 ? 'exp' : d > 0 ? 'inc' : ''}">${money(d, true)}<small>${String(p).replace('.', ',')}% ${d > 0 ? '▲' : d < 0 ? '▼' : ''}</small></div></div>`; }).join('') + `<div class="row"><div class="grow"><b>Total</b></div><div class="v num">${money(round2(k.reduce((s, x) => s + x.prev - x.ini, 0)), true)}</div></div>`); },
-  objetivos: () => panelCard('Objetivos', D().goals.length ? D().goals.map(goalMini).join('') : emptyBox('Nenhum objetivo', 'Crie metas como reserva de emergência ou viagem.'), 'planejar', 'Planejar'),
+  resumoTipo: c => { const k = byKind(c.ym); if (!k.length) return ''; return panelCard('Resumo por tipo de conta', k.map(x => `<div class="row clickable" data-act="go" data-v="contas">${avatar(x.c.name, x.c.color)}<div class="grow"><div class="t">${x.c.name}</div><div class="s">Saldo previsto</div></div><div class="v num ${x.atual < 0 ? 'exp' : ''}">${money(x.atual)}<small>${money(x.prev)}</small></div></div>`).join('') + `<div class="row"><div class="grow"><b>Total</b></div><div class="v num">${money(round2(k.reduce((s, x) => s + x.atual, 0)))}<small>${money(round2(k.reduce((s, x) => s + x.prev, 0)))}</small></div></div>`, 'contas'); },
+  balancoTipo: c => { const k = byKind(c.ym); if (!k.length) return ''; return panelCard('Balanço por tipo de conta', k.map(x => { const d = round2(x.prev - x.ini); const p = x.ini ? Math.round(d / Math.abs(x.ini) * 1000) / 10 : 0; return `<div class="row clickable" data-act="go" data-v="contas">${avatar(x.c.name, x.c.color)}<div class="grow"><div class="t">${x.c.name}</div><div class="s">Inicial ${money(x.ini)} · previsto ${money(x.prev)}</div></div><div class="v num ${d < 0 ? 'exp' : d > 0 ? 'inc' : ''}">${money(d, true)}<small>${String(p).replace('.', ',')}% ${d > 0 ? '▲' : d < 0 ? '▼' : ''}</small></div></div>`; }).join('') + `<div class="row"><div class="grow"><b>Total</b></div><div class="v num">${money(round2(k.reduce((s, x) => s + x.prev - x.ini, 0)), true)}</div></div>`, 'contas'); },
+  objetivos: () => panelCard('Objetivos', D().goals.length ? D().goals.map(goalMini).join('') : emptyBox('Nenhum objetivo', 'Crie metas como reserva de emergência ou viagem.'), 'data-act="go" data-v="planejar" data-plan="goals"'),
   orcDesp: c => orcCard('Orçamentos de despesas', c.ym, 'expense'),
   orcRec: c => orcCard('Orçamentos de receitas', c.ym, 'income'),
-  debCred: c => { const tot = c.mt.debExp + c.mt.cardExp; return panelCard('Despesas débito x crédito', tot ? `<div class="donutwrap">${donut([{v: c.mt.debExp, c: {color: 'var(--exp)'}}, {v: c.mt.cardExp, c: {color: 'var(--card)'}}], tot, 'Total')}<div class="legend"><div><i style="background:var(--exp)"></i><span>Débito · ${pctTxt(c.mt.debExp, tot)}</span><b class="num">${money(c.mt.debExp)}</b></div><div><i style="background:var(--card)"></i><span>Crédito · ${pctTxt(c.mt.cardExp, tot)}</span><b class="num">${money(c.mt.cardExp)}</b></div></div></div>` : emptyBox('Sem despesas', 'Nada lançado neste mês.')); },
+  debCred: c => { const tot = c.mt.debExp + c.mt.cardExp; return panelCard('Despesas débito x crédito', tot ? `<div class="donutwrap">${donut([{v: c.mt.debExp, c: {name: 'Débito', color: 'var(--exp)'}, f: fAttr({tab: 'expense', pay: 'debit'})}, {v: c.mt.cardExp, c: {name: 'Crédito', color: 'var(--card)'}, f: fAttr({tab: 'expense', pay: 'credit'})}], tot, 'Total')}${legendRows([{v: c.mt.debExp, c: {name: 'Débito · ' + pctTxt(c.mt.debExp, tot), color: 'var(--exp)'}, f: fAttr({tab: 'expense', pay: 'debit'})}, {v: c.mt.cardExp, c: {name: 'Crédito · ' + pctTxt(c.mt.cardExp, tot), color: 'var(--card)'}, f: fAttr({tab: 'expense', pay: 'credit'})}])}</div>` : emptyBox('Sem despesas', 'Nada lançado neste mês.'), fAttr({tab: 'expense'})); },
   rankDesp: c => { const cats = byCategory(c.ym, 'expense').slice(0, 6); return panelCard('Ranking de categorias de despesas', cats.length ? hbars(cats) : '<p class="muted">Sem despesas neste mês.</p>', 'graficos', 'Gráficos'); },
   rankRec: c => { const cats = byCategory(c.ym, 'income').slice(0, 6); return panelCard('Ranking de categorias de receitas', cats.length ? hbars(cats) : '<p class="muted">Sem receitas neste mês.</p>', 'graficos', 'Gráficos'); },
-  rankContas: c => { const l = c.accs.map(a => ({v: accountBalance(a.id, c.isCur ? todayStr() : endOf(c.ym), true), c: {name: a.name, color: a.color}})).sort((a, b) => b.v - a.v); return l.length ? panelCard('Ranking de contas', hbars(l, true)) : ''; },
+  rankContas: c => { const l = c.accs.map(a => ({v: accountBalance(a.id, c.isCur ? todayStr() : endOf(c.ym), true), c: {name: a.name, color: a.color}, f: `data-act="go" data-v="extrato" data-acc="${a.id}"`})).sort((a, b) => b.v - a.v); return l.length ? panelCard('Ranking de contas', hbars(l, true), 'contas') : ''; },
   saldoGlobal: c => { const all = D().accounts.filter(a => !a.archived); const at = round2(all.reduce((s, a) => s + accountBalance(a.id, c.isCur ? todayStr() : endOf(c.ym), true), 0)), pv = round2(all.reduce((s, a) => s + accountBalance(a.id, endOf(c.ym), false), 0));
-    return panelCard('Saldo global', `<div class="row"><div class="av" style="background:#13a37a">R$</div><div class="grow"><div class="t">Real (BRL)</div><div class="s">Todas as contas, inclusive as fora do saldo geral</div></div><div class="v num">${money(at)}<small>Previsto ${money(pv)}</small></div></div>`); },
+    return panelCard('Saldo global', `<div class="row"><div class="av" style="background:#13a37a">R$</div><div class="grow"><div class="t">Real (BRL)</div><div class="s">Todas as contas, inclusive as fora do saldo geral</div></div><div class="v num">${money(at)}<small>Previsto ${money(pv)}</small></div></div>`, 'contas'); },
   saude: c => { const h = health(c.ym); const weak = [...h.parts].sort((a, b) => a.s / a.max - b.s / b.max)[0]; const bad = h.parts.filter(p => p.s / p.max < .5).length;
-    return `<section class="panel"><div class="ph clickable" data-act="go" data-v="saude"><h2>Saúde financeira</h2>${ICO.chev}</div>
+    return `<section class="panel"><div class="ph"><h2 class="clickable" data-act="go" data-v="saude">Saúde financeira</h2>${cardTools('Saúde financeira', 'data-act="go" data-v="saude"', 'saude')}</div>
       <div class="gauge">${gauge(h.score)}<div class="grow"><b>${h.score >= 70 ? 'Saúde boa' : h.score >= 45 ? 'Atenção' : 'Precisa melhorar'}</b><div class="muted" style="font-size:.85rem">${bad ? `${bad} de ${h.parts.length} dimensões precisam melhorar` : 'Todas as dimensões estão bem'}</div></div></div>
       ${radar(h.parts)}
       <div class="notice"><span class="lbl">Destaque</span><div><b>${weak.k} · ${Math.round(weak.s / weak.max * 100)}/100.</b> ${weak.hint}</div></div>
@@ -636,10 +644,10 @@ const HOME = {
   notif: () => { const ib = D().inbox; return ib.length ? panelCard('Transações do banco para revisar', ib.slice(0, 4).map(it => `<div class="row" style="flex-wrap:wrap"><div class="grow"><div class="t">${esc(it.desc)}</div><div class="s">${brDate(it.date)} · ${esc(it.target ? targetName(it.target) : 'Escolha a conta')}</div></div><div class="v num ${it.type === 'income' ? 'inc' : 'exp'}">${money(it.type === 'income' ? it.amount : -it.amount)}</div><div class="btnrow" style="width:100%"><button class="btn sm" data-act="inboxOk" data-v="${it.id}">Importar</button><button class="btn ghost sm" data-act="inboxDel" data-v="${it.id}">Remover</button></div></div>`).join(''), 'sync', ib.length > 4 ? `Ver todas (${ib.length})` : 'Abrir') : ''; },
   emprestimos: () => { const open = D().loans.filter(l => l.amount - l.paid > 0); return panelCard('Empréstimos', open.length ? open.map(l => `<div class="row clickable" data-act="loanForm" data-v="${l.id}">${avatar(l.person, l.dir === 'lent' ? '#13a37a' : '#d24b6a')}<div class="grow"><div class="t">${esc(l.person)}</div><div class="s">${l.dir === 'lent' ? 'Você emprestou' : 'Você deve'}${l.due ? ' · até ' + brDate(l.due) : ''}</div></div><div class="v num ${l.dir === 'lent' ? 'inc' : 'exp'}">${money(round2(l.amount - l.paid))}</div></div>`).join('') : emptyBox('Nada aqui', 'Nenhum empréstimo em aberto.'), 'emprestimos'); }
 };
-function discCard(title, r, totalLbl) {
+function discCard(title, r, totalLbl, type) {
   const tot = round2(r.ok + r.soon + r.late + r.far);
-  const row = (lbl, v, color) => `<div class="row"><div class="av" style="background:${color};font-size:.72rem">${pctTxt(v, tot)}</div><div class="grow"><div class="t">${lbl}</div></div><div class="v num">${money(round2(v))}</div></div>`;
-  return panelCard(title, row('Efetivadas', r.ok, '#13a37a') + row('Vencem em até 7 dias', r.soon, '#e2b23a') + row('Vencidas', r.late, '#d24b6a') + row('Vencem depois', r.far, '#7d8496') + `<div class="row"><div class="grow"><b>${totalLbl}</b></div><div class="v num">${money(tot)}</div></div>`);
+  const row = (lbl, v, color, st) => `<div class="row clickable" ${fAttr({tab: type, st})}><div class="av" style="background:${color};font-size:.72rem">${pctTxt(v, tot)}</div><div class="grow"><div class="t">${lbl}</div></div><div class="v num">${money(round2(v))}</div>${ICO.chev}</div>`;
+  return panelCard(title, row('Efetivadas', r.ok, '#13a37a', 'ok') + row('Vencem em até 7 dias', r.soon, '#e2b23a', 'soon') + row('Vencidas', r.late, '#d24b6a', 'late') + row('Vencem depois', r.far, '#7d8496', 'far') + `<div class="row clickable" ${fAttr({tab: type})}><div class="grow"><b>${totalLbl}</b></div><div class="v num">${money(tot)}</div>${ICO.chev}</div>`, fAttr({tab: type}));
 }
 function evolCard(title, ym, type) {
   const cur = weekBuckets(ym, type), prev = weekBuckets(addYm(ym, -1), type);
@@ -649,12 +657,12 @@ function evolCard(title, ym, type) {
   const color = type === 'expense' ? 'var(--exp)' : 'var(--inc)';
   return panelCard(title, `${multiLine([cc.map(round2), pc.map(round2)], [color, 'var(--muted)'], cur.map(x => `${x.a}-${x.b}`))}
     <div class="legend" style="flex-direction:row;gap:16px"><div><i style="background:${color}"></i>${MESES[+ym.slice(5) - 1]} (acumulado)</div><div><i style="background:var(--muted)"></i>mês anterior</div></div>
-    <p style="font-size:.85rem;margin:8px 0 0">Na semana ${cur[wi].a} a ${cur[wi].b} você ${type === 'expense' ? 'gastou' : 'recebeu'} <b class="num">${money(now)}</b>. ${diffLine(now, before, type === 'expense')} que na semana anterior.</p>`);
+    <p style="font-size:.85rem;margin:8px 0 0">Na semana ${cur[wi].a} a ${cur[wi].b} você ${type === 'expense' ? 'gastou' : 'recebeu'} <b class="num">${money(now)}</b>. ${diffLine(now, before, type === 'expense')} que na semana anterior.</p>`, 'data-act="go" data-v="graficos" data-chart="' + type + '"');
 }
 function recorCard(title, ym, type) {
   const r = {fixa: 0, parcelada: 0, variavel: 0}; monthTx(ym).filter(t => t.type === type && !t.ign?.stats).forEach(t => r[t.inst ? 'parcelada' : t.fixed ? 'fixa' : 'variavel'] += t.amount); const tot = r.fixa + r.parcelada + r.variavel;
-  const items = [{v: round2(r.fixa), c: {name: 'Fixas', color: '#3a9ad9'}}, {v: round2(r.parcelada), c: {name: 'Parceladas', color: '#e2b23a'}}, {v: round2(r.variavel), c: {name: 'Variáveis', color: '#e0794a'}}];
-  return panelCard(title, tot ? `<div class="donutwrap">${donut(items, round2(tot), 'Total')}${legendRows(items)}</div>` : emptyBox('Sem dados', 'Nada lançado neste mês.'));
+  const items = [{v: round2(r.fixa), c: {name: 'Fixas', color: '#3a9ad9'}, f: fAttr({tab: type, rec: 'fixa'})}, {v: round2(r.parcelada), c: {name: 'Parceladas', color: '#e2b23a'}, f: fAttr({tab: type, rec: 'parcelada'})}, {v: round2(r.variavel), c: {name: 'Variáveis', color: '#e0794a'}, f: fAttr({tab: type, rec: 'variavel'})}];
+  return panelCard(title, tot ? `<div class="donutwrap">${donut(items, round2(tot), 'Total')}${legendRows(items)}</div>` : emptyBox('Sem dados', 'Nada lançado neste mês.'), fAttr({tab: type}));
 }
 function detOrcCard(title, d, type) {
   if (!d.ids.length) return panelCard(title, `<p class="muted" style="margin:0;font-size:.88rem">Defina orçamentos de ${type === 'expense' ? 'despesas' : 'receitas'} em Planejar.</p>`, 'planejar', 'Planejar');
@@ -671,15 +679,31 @@ function orcCard(title, ym, type) {
   if (!buds.length) return panelCard(title, `<p class="muted" style="margin:0;font-size:.88rem">Nenhum orçamento de ${type === 'expense' ? 'despesa' : 'receita'} definido.</p>`, 'planejar', 'Planejar');
   let tl = 0, tg = 0;
   const rows = buds.map(c => { const lim = D().budgets[c.id], g = byC[c.id] || 0, p = g / lim; tl += lim; tg += g; const color = type === 'income' ? 'var(--inc)' : p > 1 ? 'var(--exp)' : p > .8 ? 'var(--warn)' : 'var(--inc)';
-    return `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:.88rem"><span>${esc(c.name)}</span><span class="num">${money(g)} de ${money(lim)}</span></div><div class="bar"><i style="width:${Math.min(100, p * 100)}%;background:${color}"></i></div></div>`; }).join('');
+    return `<div style="margin-bottom:10px" class="clickable" ${fAttr({tab: type, cat: c.id})}><div style="display:flex;justify-content:space-between;gap:8px;font-size:.88rem"><span>${esc(c.name)} ›</span><span class="num">${money(g)} de ${money(lim)}</span></div><div class="bar"><i style="width:${Math.min(100, p * 100)}%;background:${color}"></i></div></div>`; }).join('');
   return panelCard(title, rows + `<div style="display:flex;justify-content:space-between;font-weight:700;margin-top:4px"><span>Total</span><span class="num">${money(round2(tg))} de ${money(round2(tl))} · ${pctTxt(tg, tl)}</span></div>`, 'planejar', 'Planejar');
 }
 function indCard(title, key) {
   const src = ui.marketData?.[key]?.length ? {items: ui.marketData[key], at: ui.marketData.atualizado, auto: true} : (D().market?.[key]?.length ? {items: D().market[key], at: D().market.atualizado} : null);
-  if (!src) return panelCard(title, `<p class="muted" style="margin:0 0 8px;font-size:.88rem">Ainda sem dados. Os valores aparecem aqui quando a atualização automática estiver ligada, ou você pode digitar os seus.</p><button class="btn ghost sm" data-act="marketEdit" data-v="${key}">Digitar valores</button>`);
+  if (!src) return panelCard(title, `<p class="muted" style="margin:0 0 8px;font-size:.88rem">Ainda sem dados. Os valores aparecem aqui quando a atualização automática estiver ligada, ou você pode digitar os seus.</p><button class="btn ghost sm" data-act="marketEdit" data-v="${key}">Digitar valores</button>`, `data-act="marketEdit" data-v="${key}"`);
   return panelCard(title, `<div class="tablewrap"><table><thead><tr><th>${key === 'cotacoes' ? 'Ativo' : 'Indicador'}</th><th style="text-align:right">Valor</th><th style="text-align:right">Variação</th></tr></thead><tbody>
     ${src.items.map(x => `<tr><td>${esc(x.nome)}${x.data ? `<div class="muted" style="font-size:.72rem">${esc(x.data)}</div>` : ''}</td><td class="num" style="text-align:right">${esc(x.valor)}</td><td class="num ${String(x.variacao || '').trim().startsWith('-') ? 'exp' : /^\+?0([.,]0+)?\s*(%|p\.p\.)?$/.test(String(x.variacao || '').trim()) ? '' : 'inc'}" style="text-align:right">${esc(x.variacao || '—')}</td></tr>`).join('')}</tbody></table></div>
-    <p class="muted" style="font-size:.75rem;margin:6px 0 0">${src.auto ? 'Atualizado automaticamente' : 'Valores digitados por você'}${src.at ? ' em ' + esc(new Date(src.at).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'})) : ''}.${src.auto ? '' : ` <button class="btn ghost sm" data-act="marketEdit" data-v="${key}">Editar</button>`}</p>`);
+    <p class="muted" style="font-size:.75rem;margin:6px 0 0">${src.auto ? 'Atualizado automaticamente' : 'Valores digitados por você'}${src.at ? ' em ' + esc(new Date(src.at).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'})) : ''}.${src.auto ? '' : ` <button class="btn ghost sm" data-act="marketEdit" data-v="${key}">Editar</button>`}</p>`, `data-act="marketEdit" data-v="${key}"`);
+}
+function cardMenu(id) {
+  const cfg = homeCfg(), i = cfg.findIndex(h => h.id === id);
+  const opener = document.querySelector(`[data-act="cardMenu"][data-v="${id}"]`)?.previousElementSibling;
+  const item = (act, label, sub) => `<div class="row clickable" data-m="${act}"><div class="grow"><div class="t">${label}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>${ICO.chev}</div>`;
+  sheet(`${sheetHead(HOME_NAME[id])}<div class="menu-list">
+    ${opener?.dataset.act ? item('open', 'Abrir', 'Ver os detalhes deste quadro') : ''}
+    ${i > 0 ? item('up', 'Mover para cima') : ''}${i < cfg.length - 1 ? item('down', 'Mover para baixo') : ''}
+    ${item('hide', 'Ocultar da tela inicial', 'Você pode mostrar de novo em Configurar resumo')}
+    ${item('config', 'Configurar resumo', 'Escolher e ordenar todos os quadros')}</div>`, (el, close) => el.addEventListener('click', e => {
+    const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return; close();
+    if (m === 'open') opener.click();
+    else if (m === 'up' || m === 'down') { const j = i + (m === 'up' ? -1 : 1); [cfg[i], cfg[j]] = [cfg[j], cfg[i]]; store.saveData(); render(); document.querySelector(`[data-act="cardMenu"][data-v="${id}"]`)?.closest('section')?.scrollIntoView({block: 'center'}); }
+    else if (m === 'hide') { cfg[i].on = false; store.saveData(); render(); toast(`"${HOME_NAME[id]}" foi ocultado.`, () => { cfg[i].on = true; store.saveData(); render(); }); }
+    else go('resumo');
+  }));
 }
 function marketEdit(key) {
   const cur = (D().market?.[key] || []).map(x => [x.nome, x.valor, x.variacao].join('; ')).join('\n');
@@ -688,11 +712,12 @@ function marketEdit(key) {
     <form id="mkf" style="display:flex;flex-direction:column;gap:10px"><div class="field"><textarea id="mkT" style="min-height:140px" placeholder="${esc(ex)}">${esc(cur)}</textarea></div><button class="btn">Salvar</button></form>`,
     (el, close) => el.querySelector('#mkf').onsubmit = e => { e.preventDefault(); D().market ||= {}; D().market[key] = el.querySelector('#mkT').value.split('\n').map(l => l.split(';').map(x => x.trim())).filter(p => p[0]).map(([nome, valor = '', variacao = '']) => ({nome, valor, variacao})); D().market.atualizado = new Date().toISOString(); store.saveData(); close(); render(); });
 }
-const reportDesc = r => [{all: 'Todos', expense: 'Despesas', income: 'Receitas', transfer: 'Transferências', pend: 'Pendentes'}[r.tab] || 'Todos', r.search ? `"${r.search}"` : ''].filter(Boolean).join(' · ');
+const reportDesc = r => [{all: 'Todos', expense: 'Despesas', income: 'Receitas', transfer: 'Transferências', pend: 'Pendentes'}[r.tab] || 'Todos', ...Object.entries(r.f || {}).filter(([, v]) => v).map(([k, v]) => fLabel(k, v)), r.search ? `"${r.search}"` : ''].filter(Boolean).join(' · ');
 function reportTotal(r, ym) {
   let l = monthTx(ym);
   if (r.tab === 'pend') l = l.filter(t => statusOf(t) !== 'ok'); else if (r.tab === 'transfer') l = l.filter(t => t.type === 'transfer' || t.type === 'cardpay'); else if (r.tab && r.tab !== 'all') l = l.filter(t => t.type === r.tab);
   if (r.search) { const q = norm(r.search); l = l.filter(t => norm(t.desc + ' ' + cat(t.cat).name + ' ' + subName(t) + ' ' + (t.tags || []).join(' ')).includes(q)); }
+  const F = r.f || {}; if (F.cat) l = l.filter(t => t.cat === F.cat); if (F.card) l = l.filter(t => t.card === F.card); if (F.st) l = l.filter(t => stKey(t) === F.st); if (F.rec) l = l.filter(t => (t.inst ? 'parcelada' : t.fixed ? 'fixa' : 'variavel') === F.rec); if (F.pay) l = l.filter(t => F.pay === 'credit' ? !!t.card : t.type === 'expense' && !t.card);
   return round2(l.reduce((s, t) => s + (t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0));
 }
 
@@ -701,7 +726,8 @@ VIEWS.inicio = () => {
   const ctx = {ym, isCur, mt: monthTotals(ym), atual: totalBalance(ym, true), prev: totalBalance(ym, false), inicial: totalBalance(addYm(ym, -1), false), accs: D().accounts.filter(a => !a.archived),
     faturasAbertas: round2(D().cards.reduce((s, cd) => s + Math.max(0, invoice(cd.id, ym).used), 0))};
   let html = store.mode === 'local' ? `<div class="notice">Os dados estão sendo salvos só neste navegador. Abra o app pelo claude.ai, com sua conta, para guardar tudo na nuvem.</div>` : '';
-  for (const h of homeCfg()) if (h.on) { try { html += HOME[h.id](ctx) || ''; } catch (e) { console.error(h.id, e); } }
+  for (const h of homeCfg()) if (h.on) { curCard = h.id; try { html += HOME[h.id](ctx) || ''; } catch (e) { console.error(h.id, e); } }
+  curCard = null;
   return html + `<button class="btn ghost" data-act="go" data-v="resumo">Configurar resumo</button>`;
 };
 VIEWS.resumo = () => {
@@ -718,20 +744,30 @@ VIEWS.busca = () => {
   <section class="panel"><div class="ph"><span class="lbl">${l.length} resultado(s) em todos os meses</span><b class="num ${sum >= 0 ? 'inc' : 'exp'}">${money(sum, true)}</b></div>${l.slice(0, 200).map(t => txRow(t)).join('') || emptyBox(q ? 'Nada encontrado' : 'Pesquise seus lançamentos', q ? 'Tente outra palavra.' : 'A busca olha todos os meses de uma vez.')}</section>`;
 };
 
+const stKey = t => { const st = statusOf(t); return st === 'ok' ? 'ok' : st === 'late' ? 'late' : t.date <= shiftDate(todayStr(), 7) ? 'soon' : 'far'; };
+const fLabel = (k, v) => k === 'cat' ? cat(v).name : k === 'card' ? 'Cartão ' + (card(v)?.name || '') : k === 'st' ? {ok: 'Efetivadas', soon: 'Vencem em até 7 dias', late: 'Vencidas', far: 'Vencem depois'}[v] : k === 'rec' ? {fixa: 'Fixas', parcelada: 'Parceladas', variavel: 'Variáveis'}[v] : k === 'pay' ? (v === 'credit' ? 'No crédito' : 'No débito') : v;
 VIEWS.lanc = () => {
   const tabs = [['all', 'Todos'], ['expense', 'Despesas'], ['income', 'Receitas'], ['transfer', 'Transferências'], ['pend', 'Pendentes']];
   let list = monthTx(ui.ym).slice();
   if (ui.lancTab === 'pend') list = list.filter(t => statusOf(t) !== 'ok');
   else if (ui.lancTab === 'transfer') list = list.filter(t => t.type === 'transfer' || t.type === 'cardpay');
   else if (ui.lancTab !== 'all') list = list.filter(t => t.type === ui.lancTab);
-  if (ui.search) { const q = norm(ui.search); list = list.filter(t => norm(t.desc + ' ' + cat(t.cat).name + ' ' + (t.tags || []).join(' ')).includes(q)); }
+  if (ui.search) { const q = norm(ui.search); list = list.filter(t => norm(t.desc + ' ' + cat(t.cat).name + ' ' + subName(t) + ' ' + (t.tags || []).join(' ')).includes(q)); }
+  const F = ui.f || {};
+  if (F.cat) list = list.filter(t => t.cat === F.cat);
+  if (F.card) list = list.filter(t => t.card === F.card);
+  if (F.st) list = list.filter(t => stKey(t) === F.st);
+  if (F.rec) list = list.filter(t => (t.inst ? 'parcelada' : t.fixed ? 'fixa' : 'variavel') === F.rec);
+  if (F.pay) list = list.filter(t => F.pay === 'credit' ? !!t.card : t.type === 'expense' && !t.card);
+  const chipsF = Object.entries(F).filter(([, v]) => v).map(([k, v]) => `<button class="chip" style="border:0;cursor:pointer;padding:6px 10px" data-act="clearF" data-v="${k}" aria-label="Remover filtro">${esc(fLabel(k, v))} ✕</button>`).join('');
   list.sort((a, b) => b.date.localeCompare(a.date) || (b.created || 0) - (a.created || 0));
   const sum = list.reduce((s, t) => s + (t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
   let lastDay = '', html = '';
   for (const t of list) { if (t.date !== lastDay) { lastDay = t.date; html += `<div class="daysep"><span>${dow(t.date)}, ${brDate(t.date)}</span></div>`; } html += txRow(t); }
   return `<div class="seg" role="tablist">${tabs.map(([k, l]) => `<button class="${ui.lancTab === k ? 'on' : ''}" data-act="lancTab" data-v="${k}">${l}</button>`).join('')}</div>
   <div class="field"><input id="searchBox" type="search" placeholder="Buscar por descrição, categoria ou tag" value="${esc(ui.search)}" aria-label="Buscar"></div>
-  ${ui.search || ui.lancTab !== 'all' ? '<button class="btn ghost sm" style="align-self:flex-start" data-act="saveReport">Salvar como relatório</button>' : ''}
+  ${chipsF ? `<div class="chips" style="align-items:center"><span class="lbl">Filtros:</span>${chipsF}<button class="chip" style="border:0;cursor:pointer;padding:6px 10px;background:transparent;color:var(--accent)" data-act="clearF" data-v="*">Limpar</button></div>` : ''}
+  ${ui.search || ui.lancTab !== 'all' || chipsF ? '<button class="btn ghost sm" style="align-self:flex-start" data-act="saveReport">Salvar como relatório</button>' : ''}
   <section class="panel"><div class="ph"><span class="lbl">${list.length} lançamento(s)</span><b class="num ${sum >= 0 ? 'inc' : 'exp'}">${money(sum, true)}</b></div>
   ${html || emptyBox('Nada por aqui', 'Toque no botão + para lançar uma despesa, receita ou transferência.')}</section>`;
 };
@@ -810,8 +846,8 @@ VIEWS.graficos = () => {
   const color = ty === 'expense' ? 'var(--exp)' : 'var(--inc)';
   const rec = {fixa: 0, parcelada: 0, variavel: 0}; monthTx(ui.ym).filter(t => t.type === ty).forEach(t => rec[t.inst ? 'parcelada' : t.fixed ? 'fixa' : 'variavel'] += t.amount);
   return `<div class="seg"><button class="${ty === 'expense' ? 'on' : ''}" data-act="chartTab" data-v="expense">Despesas</button><button class="${ty === 'income' ? 'on' : ''}" data-act="chartTab" data-v="income">Receitas</button></div>
-  <section class="panel"><div class="ph"><h2>Por categoria</h2></div>${cats.length ? `<div class="donutwrap">${donut(cats, total, 'Total')}<div class="legend">${cats.map(x => `<div><i style="background:${x.c.color}"></i><span>${esc(x.c.name)}</span><b class="num">${Math.round(x.v / total * 100)}%</b></div>`).join('')}</div></div>` : emptyBox('Sem dados', 'Nada lançado neste mês.')}</section>
-  <section class="panel"><div class="ph"><h2>Ranking</h2></div>${cats.map(x => `<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:.88rem"><span>${esc(x.c.name)}</span><span class="num">${money(x.v)}</span></div><div class="bar"><i style="width:${x.v / (cats[0]?.v || 1) * 100}%;background:${x.c.color}"></i></div></div>`).join('') || '<p class="muted">Sem dados.</p>'}</section>
+  <section class="panel"><div class="ph"><h2>Por categoria</h2></div>${cats.length ? `<div class="donutwrap">${donut(cats, total, 'Total')}<div class="legend">${cats.map(x => `<div class="clickable" ${x.f}><i style="background:${x.c.color}"></i><span>${esc(x.c.name)}</span><b class="num">${Math.round(x.v / total * 100)}%</b><span class="muted">›</span></div>`).join('')}</div></div>` : emptyBox('Sem dados', 'Nada lançado neste mês.')}</section>
+  <section class="panel"><div class="ph"><h2>Ranking</h2></div>${cats.map(x => `<div style="margin-bottom:8px" class="clickable" ${x.f}><div style="display:flex;justify-content:space-between;font-size:.88rem"><span>${esc(x.c.name)}</span><span class="num">${money(x.v)}</span></div><div class="bar"><i style="width:${x.v / (cats[0]?.v || 1) * 100}%;background:${x.c.color}"></i></div></div>`).join('') || '<p class="muted">Sem dados.</p>'}</section>
   <section class="panel"><div class="ph"><h2>Evolução no mês</h2><span class="muted" style="font-size:.78rem">acumulado por dia</span></div>${lineChart(cum, color, 5)}
     <p class="muted" style="font-size:.85rem;margin:6px 0 0">Até agora: ${money(round2(cum[Math.min(days, +todayStr().slice(8)) - 1] || cum[days - 1]))}. Mês passado no mesmo dia: ${money(round2(prevCum[Math.min(days, +todayStr().slice(8)) - 1] || 0))}.</p></section>
   <section class="panel"><div class="ph"><h2>Por recorrência</h2></div><div class="donutwrap">${donut([{v: rec.fixa, c: {color: '#3a9ad9'}}, {v: rec.parcelada, c: {color: '#e2b23a'}}, {v: rec.variavel, c: {color: '#e0794a'}}], rec.fixa + rec.parcelada + rec.variavel, 'Total')}
@@ -1529,7 +1565,10 @@ document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]'); if (!el) return;
   const act = el.dataset.act, v = el.dataset.v;
   const A = {
-    go: () => go(v, {acc: el.dataset.acc || ui.acc, lancTab: el.dataset.tab || (v === 'lanc' && ui.view !== 'lanc' ? 'all' : ui.lancTab), search: v === 'lanc' && ui.view !== 'lanc' ? '' : ui.search}),
+    go: () => { if (el.dataset.plan) ui.planTab = el.dataset.plan; if (el.dataset.chart) ui.chartTab = el.dataset.chart; const fresh = v === 'lanc' && ui.view !== 'lanc'; go(v, {acc: el.dataset.acc || ui.acc, lancTab: el.dataset.tab || (fresh ? 'all' : ui.lancTab), search: fresh ? '' : ui.search, f: fresh ? {} : ui.f}); },
+    filter: () => { const d = el.dataset; go('lanc', {lancTab: d.ftab || 'all', search: '', f: {cat: d.fcat, card: d.fcard, st: d.fst, rec: d.frec, pay: d.fpay}}); },
+    clearF: () => { if (v === '*') { ui.f = {}; ui.search = ''; } else delete ui.f[v]; render(); },
+    cardMenu: () => cardMenu(v),
     month: () => { ui.ym = addYm(ui.ym, +v); render(); },
     hide: () => { S().hide = !S().hide; store.saveData(); render(); },
     new: () => txForm(null, {date: el.dataset.date || (ui.ym === ymOf(todayStr()) ? todayStr() : ui.ym + '-01')}),
@@ -1560,8 +1599,8 @@ document.addEventListener('click', e => {
     homeMove: () => { const cfg = homeCfg(), i = +v, j = i + +el.dataset.dir; if (j < 0 || j >= cfg.length) return; [cfg[i], cfg[j]] = [cfg[j], cfg[i]]; store.saveData(); render(); },
     homeAll: () => { homeCfg().forEach(h => h.on = v === '1'); store.saveData(); render(); },
     homeReset: () => { const on = Object.fromEntries(homeCfg().map(h => [h.id, h.on])); S().home = HOME_CARDS.map(([id]) => ({id, on: on[id] ?? true})); store.saveData(); render(); toast('Ordem padrão restaurada.'); },
-    saveReport: () => quickName('Nome do relatório', name => { (D().reports ||= []).push({id: uid(), name, tab: ui.lancTab, search: ui.search}); store.saveData(); toast('Relatório salvo. Ele aparece na tela inicial.'); render(); }),
-    openReport: () => { const r = D().reports.find(x => x.id === v); go('lanc', {lancTab: r.tab || 'all', search: r.search || ''}); },
+    saveReport: () => quickName('Nome do relatório', name => { (D().reports ||= []).push({id: uid(), name, tab: ui.lancTab, search: ui.search, f: {...(ui.f || {})}}); store.saveData(); toast('Relatório salvo. Ele aparece na tela inicial.'); render(); }),
+    openReport: () => { const r = D().reports.find(x => x.id === v); go('lanc', {lancTab: r.tab || 'all', search: r.search || '', f: {...(r.f || {})}}); },
     delReport: () => { D().reports = D().reports.filter(x => x.id !== v); store.saveData(); render(); },
     marketEdit: () => marketEdit(v),
     chatClear: () => { chatCtl?.abort(); ui.chat = []; render(); }
